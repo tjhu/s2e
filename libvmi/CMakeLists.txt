@@ -68,7 +68,7 @@ execute_process(COMMAND ${LLVM_CONFIG} "--cxxflags"
                 RESULT_VARIABLE LLVM_CONFIG_RESULT
                 OUTPUT_VARIABLE LLVM_CXXFLAGS
                 OUTPUT_STRIP_TRAILING_WHITESPACE)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${LLVM_CXXFLAGS} -Wall -std=c++17")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${LLVM_CXXFLAGS} -Wall -std=c++17 -frtti")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror -Wno-gnu-anonymous-struct -Wno-nested-anon-types -Wno-c99-extensions")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-address-of-packed-member")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g -O2")
@@ -87,13 +87,13 @@ target_link_libraries(injector vmi elf ${LLVM_LIBS} z)
 add_executable(dump src/dump.cpp)
 target_link_libraries(dump vmi elf ${LLVM_LIBS} z)
 
-add_executable(reader src/reader.cpp)
-target_link_libraries(reader vmi elf ${LLVM_LIBS} z)
+# add_executable(reader src/reader.cpp)
+# target_link_libraries(reader vmi elf ${LLVM_LIBS} z)
+# 
+# add_executable(addrs2lines src/addrs2lines.cpp)
+# target_link_libraries(addrs2lines vmi ${LIBDWARF_LIB} elf ${LLVM_LIBS} z)
 
-add_executable(addrs2lines src/addrs2lines.cpp)
-target_link_libraries(addrs2lines vmi ${LIBDWARF_LIB} elf ${LLVM_LIBS} z)
-
-install(TARGETS crashdump vmidemo injector dump reader addrs2lines
+install(TARGETS crashdump vmidemo injector dump
         RUNTIME DESTINATION bin)
 install(DIRECTORY "include/vmi"
         DESTINATION include)

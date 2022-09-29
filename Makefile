@@ -71,38 +71,23 @@ FIND_CONFIG_SOURCE=$(shell find $(1) -name 'configure' -o -name 'CMakeLists.txt'
 # having to update this URL.
 GUEST_TOOLS_BINARIES_URL=https://github.com/S2E/s2e/releases/download/v2.0.0/
 
-# LLVM variables
-LLVM_BUILD?=$(S2E_BUILD)
-ifeq ($(LLVM_BUILD),$(S2E_BUILD))
-LLVM_DIRS=llvm-release llvm-debug
+ifndef LLVM_DIR
+    $(error LLVM_DIR is not set)
 endif
 
-# More recent point releases don't have the Ubuntu binaries yet, so stick with 14.0.0.
-LLVM_VERSION=14.0.0
-LLVM_SRC=llvm-$(LLVM_VERSION).src.tar.xz
-LLVM_SRC_DIR=llvm-$(LLVM_VERSION).src
-LLVM_SRC_URL=https://github.com/llvm/llvm-project/releases/download/llvmorg-$(LLVM_VERSION)/
+ifndef LLVM_TOOLS_DIR
+    $(error LLVM_TOOLS_DIR is not set)
+endif
 
-# The Python script should only return a single word - the suffix of the Clang
-# binary to download. If an error message is printed to stderr, the Makefile
-# error will be triggered.
-CLANG_BINARY_SUFFIX=$(shell $(BUILD_SCRIPTS_SRC)/determine_clang_binary_suffix.py 2>&1)
-ifneq ($(words $(CLANG_BINARY_SUFFIX)), 1)
-$(error "Failed to determine Clang binary to download: $(CLANG_BINARY_SUFFIX)")
+ifndef CLANG_CC
+    $(error CLANG_CC is not set)
+endif
+
+ifndef CLANG_CXX
+    $(error CLANG_CXX is not set)
 endif
 
 KLEE_DIRS=$(foreach suffix,-debug -release,$(addsuffix $(suffix),klee))
-
-CLANG_BINARY_DIR=clang+llvm-$(LLVM_VERSION)-$(CLANG_BINARY_SUFFIX)
-CLANG_BINARY=$(CLANG_BINARY_DIR).tar.xz
-
-CLANG_SRC=clang-$(LLVM_VERSION).src.tar.xz
-CLANG_SRC_DIR=clang-$(LLVM_VERSION).src
-CLANG_DEST_DIR=$(LLVM_SRC_DIR)/tools/clang
-
-COMPILER_RT_SRC=compiler-rt-$(LLVM_VERSION).src.tar.xz
-COMPILER_RT_SRC_DIR=compiler-rt-$(LLVM_VERSION).src
-COMPILER_RT_DEST_DIR=$(LLVM_SRC_DIR)/projects/compiler-rt
 
 # Capstone variables
 CAPSTONE_VERSION=4.0.2
@@ -177,10 +162,10 @@ guest-tools-win-install: stamps/guest-tools32-win-install stamps/guest-tools64-w
 
 install: all-release stamps/libs2e-release-install stamps/tools-release-install \
     stamps/libvmi-release-install guest-tools-install     \
-    guest-tools-win-install stamps/llvm-release-install
+    guest-tools-win-install
 install-debug: all-debug stamps/libs2e-debug-install stamps/tools-debug-install \
     stamps/libvmi-debug-install guest-tools-install       \
-    guest-tools-win-install stamps/llvm-release-install
+    guest-tools-win-install
 
 # From https://stackoverflow.com/questions/4219255/how-do-you-get-the-list-of-targets-in-a-makefile
 list:
@@ -217,30 +202,6 @@ stamps/%-make:
 define DOWNLOAD
 curl -f -L "$1" -o "$2"
 endef
-
-
-ifeq ($(LLVM_BUILD),$(S2E_BUILD))
-# Download LLVM
-$(LLVM_SRC) $(CLANG_SRC) $(COMPILER_RT_SRC) $(CLANG_BINARY):
-	$(call DOWNLOAD,$(LLVM_SRC_URL)/$@,$@)
-
-
-.INTERMEDIATE: $(CLANG_SRC_DIR) $(COMPILER_RT_SRC_DIR) $(CLANG_BINARY_DIR)
-
-$(LLVM_SRC_DIR): $(LLVM_SRC) $(CLANG_SRC_DIR) $(COMPILER_RT_SRC_DIR)
-	tar -xmf $<
-	mv $(CLANG_SRC_DIR) $(CLANG_DEST_DIR)
-	mv $(COMPILER_RT_SRC_DIR) $(COMPILER_RT_DEST_DIR)
-
-$(CLANG_SRC_DIR): $(CLANG_SRC)
-	tar -xmf $<
-
-$(COMPILER_RT_SRC_DIR): $(COMPILER_RT_SRC)
-	tar -xmf $<
-
-else
-# Use the specified LLVM build folder, don't build LLVM
-endif
 
 # Download Lua
 $(LUA_SRC):
@@ -290,68 +251,6 @@ $(PROTOBUF_BUILD_DIR):
 	tar -zxf $(S2E_BUILD)/$(PROTOBUF_SRC_DIR).tar.gz
 	mkdir -p $(S2E_BUILD)/$(PROTOBUF_BUILD_DIR)
 
-ifeq ($(LLVM_BUILD),$(S2E_BUILD))
-
-
-########
-# LLVM #
-########
-
-stamps/clang-binary: $(CLANG_BINARY) | stamps
-	tar -xmf $<
-	mkdir -p $(S2E_PREFIX)
-	cp -r $(CLANG_BINARY_DIR)/* $(S2E_PREFIX)
-	rm -r $(CLANG_BINARY_DIR)/*
-	touch $@
-
-CLANG_CC = $(S2E_PREFIX)/bin/clang
-CLANG_CXX = $(S2E_PREFIX)/bin/clang++
-CLANG_LIB = $(S2E_PREFIX)/lib
-
-LLVM_CONFIGURE_FLAGS = -DLLVM_TARGETS_TO_BUILD="X86"        \
-                       -DLLVM_TARGET_ARCH="X86_64"          \
-                       -DLLVM_INCLUDE_EXAMPLES=Off          \
-                       -DLLVM_INCLUDE_DOCS=Off              \
-                       -DLLVM_INCLUDE_TESTS=On              \
-                       -DLLVM_ENABLE_RTTI=On                \
-                       -DLLVM_ENABLE_EH=On                  \
-                       -DLLVM_INCLUDE_BENCHMARKS=Off        \
-                       -DLLVM_BINUTILS_INCDIR=/usr/include  \
-                       -DCOMPILER_RT_BUILD_SANITIZERS=Off   \
-                       -DENABLE_ASSERTIONS=On               \
-                       -DCMAKE_C_COMPILER=$(CLANG_CC)       \
-                       -DCMAKE_CXX_COMPILER=$(CLANG_CXX)    \
-                       -DCMAKE_C_FLAGS="$(CFLAGS_ARCH)"     \
-                       -G "Unix Makefiles"
-
-stamps/llvm-debug-configure: stamps/clang-binary $(LLVM_SRC_DIR)
-stamps/llvm-debug-configure: CONFIGURE_COMMAND = cmake $(LLVM_CONFIGURE_FLAGS)         \
-                                                 -DCMAKE_BUILD_TYPE=Debug              \
-                                                 -DCMAKE_CXX_FLAGS="$(CXXFLAGS_DEBUG)" \
-                                                 $(LLVM_BUILD)/$(LLVM_SRC_DIR)
-
-stamps/llvm-release-configure: stamps/clang-binary $(LLVM_SRC_DIR)
-stamps/llvm-release-configure: CONFIGURE_COMMAND = cmake $(LLVM_CONFIGURE_FLAGS)           \
-                                                   -DCMAKE_BUILD_TYPE=Release              \
-                                                   -DCMAKE_CXX_FLAGS="$(CXXFLAGS_RELEASE)" \
-                                                   $(LLVM_BUILD)/$(LLVM_SRC_DIR)
-
-stamps/llvm-debug-make: stamps/llvm-debug-configure
-
-stamps/llvm-release-make: stamps/llvm-release-configure
-
-stamps/llvm-release-install: stamps/llvm-release-make
-	cp $(S2E_BUILD)/llvm-release/lib/LLVMgold.so $(S2E_PREFIX)/lib
-
-else
-stamps/llvm-release-make:
-	echo "Won't build"
-stamps/llvm-debug-make:
-	echo "Won't build"
-stamps/llvm-release-install:
-	echo "Won't build"
-endif
-
 ########
 # SOCI #
 ########
@@ -363,7 +262,7 @@ SOCI_CONFIGURE_FLAGS = -DCMAKE_INSTALL_PREFIX=$(S2E_PREFIX) \
                        -DCMAKE_C_FLAGS="-fPIC"              \
                        -G "Unix Makefiles"
 
-stamps/soci-configure: stamps/clang-binary $(SOCI_BUILD_DIR)
+stamps/soci-configure:  $(SOCI_BUILD_DIR)
 stamps/soci-configure: CONFIGURE_COMMAND = cmake $(SOCI_CONFIGURE_FLAGS)    \
                                            $(S2E_BUILD)/$(SOCI_SRC_DIR)
 
@@ -385,7 +284,7 @@ Z3_CONFIGURE_FLAGS = -DCMAKE_INSTALL_PREFIX=$(S2E_PREFIX)               \
                      -DUSE_OPENMP=Off                                   \
                      -G "Unix Makefiles"
 
-stamps/z3-configure: stamps/clang-binary $(Z3_BUILD_DIR)
+stamps/z3-configure:  $(Z3_BUILD_DIR)
 	cd $(Z3_SRC_DIR) &&                                         \
 	python3 contrib/cmake/bootstrap.py create
 	cd $(Z3_BUILD_DIR) &&                                       \
@@ -431,7 +330,7 @@ CAPSTONE_CONFIGURE_FLAGS = -DCMAKE_INSTALL_PREFIX=$(S2E_PREFIX)         \
                      -DCMAKE_CXX_FLAGS="-fno-omit-frame-pointer -fPIC"  \
                      -G "Unix Makefiles"
 
-stamps/capstone-configure: stamps/clang-binary $(CAPSTONE_BUILD_DIR)
+stamps/capstone-configure:  $(CAPSTONE_BUILD_DIR)
 	cd $(CAPSTONE_BUILD_DIR) &&                                         \
 	cmake $(CAPSTONE_CONFIGURE_FLAGS) $(S2E_BUILD)/$(CAPSTONE_SRC_DIR)
 	touch $@
@@ -445,7 +344,7 @@ stamps/capstone-make: stamps/capstone-configure
 # libdwarf #
 ############
 
-stamps/libdwarf-configure: stamps/clang-binary $(LIBDWARF_BUILD_DIR)
+stamps/libdwarf-configure:  $(LIBDWARF_BUILD_DIR)
 	cd $(LIBDWARF_BUILD_DIR) &&                                         \
 	CC=$(CLANG_CC) CXX=$(CLANG_CXX) $(S2E_BUILD)/$(LIBDWARF_SRC_DIR)/configure --prefix=$(S2E_PREFIX)
 	touch $@
@@ -466,7 +365,7 @@ RAPIDJSON_CONFIGURE_FLAGS = -DCMAKE_INSTALL_PREFIX=$(S2E_PREFIX)                
                             -DRAPIDJSON_BUILD_TESTS=OFF
 
 
-stamps/rapidjson-configure: stamps/clang-binary $(RAPIDJSON_BUILD_DIR)
+stamps/rapidjson-configure:  $(RAPIDJSON_BUILD_DIR)
 	cd $(RAPIDJSON_BUILD_DIR) &&                                         \
 	cmake $(RAPIDJSON_CONFIGURE_FLAGS) $(S2E_BUILD)/$(RAPIDJSON_SRC_DIR)
 	touch $@
@@ -479,7 +378,7 @@ stamps/rapidjson-make: stamps/rapidjson-configure
 # protobuf #
 ############
 
-stamps/protobuf-configure: stamps/clang-binary $(PROTOBUF_BUILD_DIR)
+stamps/protobuf-configure:  $(PROTOBUF_BUILD_DIR)
 	cd $(PROTOBUF_BUILD_DIR) &&                                         \
 	CC=$(CLANG_CC) CXX=$(CLANG_CXX) CXXFLAGS=-fPIC CFLAGS=-fPIC $(S2E_BUILD)/$(PROTOBUF_SRC_DIR)/configure --prefix=$(S2E_PREFIX)
 	touch $@
@@ -506,7 +405,7 @@ stamps/lua-make: $(LUA_DIR)
 # GTest #
 #########
 
-stamps/gtest-release-configure: stamps/clang-binary $(GTEST_BUILD_DIR)
+stamps/gtest-release-configure:  $(GTEST_BUILD_DIR)
 	cd $(GTEST_BUILD_DIR) && cmake -DCMAKE_C_COMPILER=$(CLANG_CC) \
 	-DCMAKE_CXX_COMPILER=$(CLANG_CXX)  \
 	$(GTEST_SRC_DIR)
@@ -533,17 +432,15 @@ KLEE_CONFIGURE_FLAGS = -DCMAKE_INSTALL_PREFIX=$(S2E_PREFIX)                     
                        -DZ3_INCLUDE_DIRS=$(S2E_PREFIX)/include                              \
                        -DZ3_LIBRARIES=$(S2E_PREFIX)/lib/libz3.a
 
-stamps/klee-debug-configure: stamps/llvm-debug-make stamps/z3 stamps/gtest-release-make $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/klee)
+stamps/klee-debug-configure:  stamps/z3 stamps/gtest-release-make $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/klee)
 stamps/klee-debug-configure: CONFIGURE_COMMAND = cmake $(KLEE_CONFIGURE_FLAGS)                      \
                                                  -DCMAKE_BUILD_TYPE=Debug                           \
-                                                 -DLLVM_DIR=$(LLVM_BUILD)/llvm-debug/lib/cmake/llvm \
                                                  -DCMAKE_CXX_FLAGS="$(CXXFLAGS_DEBUG) -fno-omit-frame-pointer -fPIC" \
                                                  $(S2E_SRC)/klee
 
-stamps/klee-release-configure: stamps/llvm-release-make stamps/z3 stamps/gtest-release-make $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/klee)
+stamps/klee-release-configure:  stamps/z3 stamps/gtest-release-make $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/klee)
 stamps/klee-release-configure: CONFIGURE_COMMAND = cmake $(KLEE_CONFIGURE_FLAGS)                        \
                                                    -DCMAKE_BUILD_TYPE=$(RELEASE_BUILD_TYPE)             \
-                                                   -DLLVM_DIR=$(LLVM_BUILD)/llvm-release/lib/cmake/llvm \
                                                    -DCMAKE_CXX_FLAGS="$(CXXFLAGS_RELEASE) -fno-omit-frame-pointer -fPIC" \
                                                    $(S2E_SRC)/klee
 
@@ -559,19 +456,17 @@ LIBVMI_COMMON_FLAGS = -DCMAKE_INSTALL_PREFIX=$(S2E_PREFIX)          \
                       -DCMAKE_MODULE_PATH=$(S2E_SRC)/cmake          \
                       -DCMAKE_C_COMPILER=$(CLANG_CC)                \
                       -DCMAKE_CXX_COMPILER=$(CLANG_CXX)             \
-                      -DCMAKE_C_FLAGS="$(CFLAGS_ARCH) -fPIC"        \
+                      -DCMAKE_C_FLAGS="$(CFLAGS_ARCH) -fPIC -frtti" \
                       -G "Unix Makefiles"
 
-stamps/libvmi-debug-configure: stamps/llvm-debug-make stamps/libdwarf-make stamps/rapidjson-make $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libvmi)
+stamps/libvmi-debug-configure:  stamps/libdwarf-make stamps/rapidjson-make $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libvmi)
 stamps/libvmi-debug-configure: CONFIGURE_COMMAND = cmake $(LIBVMI_COMMON_FLAGS)                         \
-                                                   -DLLVM_DIR=$(LLVM_BUILD)/llvm-debug/lib/cmake/llvm   \
                                                    -DCMAKE_BUILD_TYPE=Debug                             \
                                                    -DCMAKE_CXX_FLAGS="$(CXXFLAGS_DEBUG) -fPIC"          \
                                                    $(S2E_SRC)/libvmi
 
-stamps/libvmi-release-configure: stamps/llvm-release-make stamps/libdwarf-make stamps/rapidjson-make $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libvmi)
+stamps/libvmi-release-configure:  stamps/libdwarf-make stamps/rapidjson-make $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libvmi)
 stamps/libvmi-release-configure: CONFIGURE_COMMAND = cmake $(LIBVMI_COMMON_FLAGS)                           \
-                                                     -DLLVM_DIR=$(LLVM_BUILD)/llvm-release/lib/cmake/llvm   \
                                                      -DCMAKE_BUILD_TYPE=$(RELEASE_BUILD_TYPE)               \
                                                      -DCMAKE_CXX_FLAGS="$(CXXFLAGS_RELEASE) -fPIC"          \
                                                      $(S2E_SRC)/libvmi
@@ -600,7 +495,7 @@ LIBFSIGCXX_COMMON_FLAGS = -DCMAKE_MODULE_PATH=$(S2E_SRC)/cmake  \
                           -DCMAKE_C_FLAGS="$(CFLAGS_ARCH)"      \
                           -G "Unix Makefiles"
 
-stamps/libfsigc++-debug-configure: stamps/clang-binary $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libfsigc++)
+stamps/libfsigc++-debug-configure:  $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libfsigc++)
 
 stamps/libfsigc++-debug-configure: CONFIGURE_COMMAND = cmake $(LIBFSIGCXX_COMMON_FLAGS) \
                                                        -DCMAKE_BUILD_TYPE=Debug         \
@@ -608,7 +503,7 @@ stamps/libfsigc++-debug-configure: CONFIGURE_COMMAND = cmake $(LIBFSIGCXX_COMMON
                                                        $(S2E_SRC)/libfsigc++
 
 
-stamps/libfsigc++-release-configure: stamps/clang-binary $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libfsigc++)
+stamps/libfsigc++-release-configure:  $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libfsigc++)
 
 stamps/libfsigc++-release-configure: CONFIGURE_COMMAND = cmake $(LIBFSIGCXX_COMMON_FLAGS)   \
                                      -DCMAKE_BUILD_TYPE=$(RELEASE_BUILD_TYPE)               \
@@ -629,7 +524,7 @@ LIBQ_COMMON_FLAGS = -DCMAKE_MODULE_PATH=$(S2E_SRC)/cmake    \
                     -DCMAKE_C_FLAGS="$(CFLAGS_ARCH)"        \
                     -G "Unix Makefiles"
 
-stamps/libq-debug-configure: stamps/clang-binary $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libq)
+stamps/libq-debug-configure:  $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libq)
 
 stamps/libq-debug-configure: CONFIGURE_COMMAND = cmake $(LIBQ_COMMON_FLAGS) \
                                                  -DCMAKE_BUILD_TYPE=Debug   \
@@ -637,7 +532,7 @@ stamps/libq-debug-configure: CONFIGURE_COMMAND = cmake $(LIBQ_COMMON_FLAGS) \
                                                  $(S2E_SRC)/libq
 
 
-stamps/libq-release-configure: stamps/clang-binary $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libq)
+stamps/libq-release-configure:  $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libq)
 
 stamps/libq-release-configure: CONFIGURE_COMMAND = cmake $(LIBQ_COMMON_FLAGS)                 \
                                                    -DCMAKE_BUILD_TYPE=$(RELEASE_BUILD_TYPE)   \
@@ -658,7 +553,7 @@ LIBCOROUTINE_COMMON_FLAGS = -DCMAKE_MODULE_PATH=$(S2E_SRC)/cmake    \
                             -DCMAKE_C_FLAGS="$(CFLAGS_ARCH)"        \
                             -G "Unix Makefiles"
 
-stamps/libcoroutine-debug-configure: stamps/clang-binary $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libcoroutine)
+stamps/libcoroutine-debug-configure:  $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libcoroutine)
 
 stamps/libcoroutine-debug-configure: CONFIGURE_COMMAND = cmake $(LIBCOROUTINE_COMMON_FLAGS)    \
                                                          -DCMAKE_BUILD_TYPE=Debug              \
@@ -666,7 +561,7 @@ stamps/libcoroutine-debug-configure: CONFIGURE_COMMAND = cmake $(LIBCOROUTINE_CO
                                                          $(S2E_SRC)/libcoroutine
 
 
-stamps/libcoroutine-release-configure: stamps/clang-binary $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libcoroutine)
+stamps/libcoroutine-release-configure:  $(call FIND_CONFIG_SOURCE,$(S2E_SRC)/libcoroutine)
 
 stamps/libcoroutine-release-configure: CONFIGURE_COMMAND = cmake $(LIBCOROUTINE_COMMON_FLAGS)        \
                                                            -DCMAKE_BUILD_TYPE=$(RELEASE_BUILD_TYPE)  \
@@ -697,7 +592,8 @@ LIBS2E_CONFIGURE_FLAGS = --with-cc=$(CLANG_CC)                                  
                          --with-libs2eplugins-src=$(S2E_SRC)/libs2eplugins          \
                          --prefix=$(S2E_PREFIX)                                     \
 
-LIBS2E_DEBUG_FLAGS = --with-llvm=$(LLVM_BUILD)/llvm-debug                           \
+LIBS2E_DEBUG_FLAGS = --with-llvm=$(LLVM_DIR)                                        \
+					 --with-llvm-tools-dir=$(LLVM_TOOLS_DIR)                        \
                      --with-klee=$(S2E_BUILD)/klee-debug                            \
                      --with-libvmi=$(S2E_BUILD)/libvmi-debug                        \
                      --with-fsigc++=$(S2E_BUILD)/libfsigc++-debug                   \
@@ -706,7 +602,8 @@ LIBS2E_DEBUG_FLAGS = --with-llvm=$(LLVM_BUILD)/llvm-debug                       
                      --with-cxxflags="$(CXXFLAGS_DEBUG)"                            \
                      --enable-debug
 
-LIBS2E_RELEASE_FLAGS = --with-llvm=$(LLVM_BUILD)/llvm-release                       \
+LIBS2E_RELEASE_FLAGS = --with-llvm=$(LLVM_DIR)                                      \
+					   --with-llvm-tools-dir=$(LLVM_TOOLS_DIR)                      \
                        --with-klee=$(S2E_BUILD)/klee-release                        \
                        --with-libvmi=$(S2E_BUILD)/libvmi-release                    \
                        --with-fsigc++=$(S2E_BUILD)/libfsigc++-release               \
@@ -807,9 +704,8 @@ TOOLS_CONFIGURE_FLAGS = -DCMAKE_INSTALL_PREFIX=$(S2E_PREFIX)              \
                         -DS2EPLUGINS_SRC_DIR=$(S2E_SRC)/libs2eplugins/src \
                         -G "Unix Makefiles"
 
-stamps/tools-debug-configure: stamps/llvm-debug-make stamps/libvmi-debug-make stamps/libfsigc++-debug-make stamps/libq-debug-make
+stamps/tools-debug-configure:  stamps/libvmi-debug-make stamps/libfsigc++-debug-make stamps/libq-debug-make
 stamps/tools-debug-configure: CONFIGURE_COMMAND = cmake $(TOOLS_CONFIGURE_FLAGS)                        \
-                                                  -DLLVM_DIR=$(LLVM_BUILD)/llvm-debug/lib/cmake/llvm    \
                                                   -DVMI_DIR=$(S2E_BUILD)/libvmi-debug                   \
                                                   -DFSIGCXX_DIR=$(S2E_BUILD)/libfsigc++-debug           \
                                                   -DLIBQ_DIR=$(S2E_BUILD)/libq-debug                    \
@@ -817,9 +713,8 @@ stamps/tools-debug-configure: CONFIGURE_COMMAND = cmake $(TOOLS_CONFIGURE_FLAGS)
                                                   -DCMAKE_CXX_FLAGS="$(CXXFLAGS_DEBUG)"                 \
                                                   $(S2E_SRC)/tools
 
-stamps/tools-release-configure: stamps/llvm-release-make stamps/libvmi-release-make stamps/libfsigc++-release-make stamps/libq-release-make
+stamps/tools-release-configure:  stamps/libvmi-release-make stamps/libfsigc++-release-make stamps/libq-release-make
 stamps/tools-release-configure: CONFIGURE_COMMAND = cmake $(TOOLS_CONFIGURE_FLAGS)                          \
-                                                    -DLLVM_DIR=$(LLVM_BUILD)/llvm-release/lib/cmake/llvm    \
                                                     -DVMI_DIR=$(S2E_BUILD)/libvmi-release                   \
                                                     -DFSIGCXX_DIR=$(S2E_BUILD)/libfsigc++-release           \
                                                     -DLIBQ_DIR=$(S2E_BUILD)/libq-release                    \
