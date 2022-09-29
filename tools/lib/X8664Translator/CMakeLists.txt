@@ -19,10 +19,10 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-add_definitions(-D__STDC_FORMAT_MACROS -D_GNU_SOURCE -DNEED_CPU_H
+add_definitions(-D__STDC_FORMAT_MACROS -D_GNU_SOURCE -DNEED_CPU_H -O0 -g
                 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -DSTATIC_TRANSLATOR
                 -DTARGET_PHYS_ADDR_BITS=64 -DCONFIG_SYMBEX -DCONFIG_SOFTMMU -DCPU_TEMP_BUF_NLONGS=128
-                -DTARGET_LONG_BITS=64 -DTARGET_INSN_START_EXTRA_WORDS=1)
+                -DTARGET_LONG_BITS=64 -DTARGET_INSN_START_EXTRA_WORDS=1 -DTARGET_X86_64=1)
 
 add_library(X8664Translator STATIC ${LIBCPU_SRC_DIR}/src/target-${LIBCPU_TARGET}/translate.c
                                    ${LIBCPU_SRC_DIR}/src/target-${LIBCPU_TARGET}/helper.c
@@ -56,4 +56,4 @@ target_include_directories(X8664Translator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(X8664Translator PRIVATE -Wredundant-decls -w -Wundef
                        -Wendif-labels -Wwrite-strings -fno-strict-aliasing
                        -Wno-sign-compare -Wno-missing-field-initializers
-                       -fexceptions)
+                       -fexceptions -O0 -g)

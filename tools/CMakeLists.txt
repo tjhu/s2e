@@ -31,6 +31,7 @@ set(s2etools_PACKAGE_VERSION
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR})
 message(STATUS "CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}")
 include(CMakePackageConfigHelpers)
+include(ExternalProject)
 set(CMAKE_VERSION_FILE "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Version.cmake")
 write_basic_package_version_file(${CMAKE_VERSION_FILE}
                                  VERSION ${s2etools_PACKAGE_VERSION}
@@ -39,12 +40,25 @@ write_basic_package_version_file(${CMAKE_VERSION_FILE}
 include(FindPkgConfig)
 pkg_check_modules(GLIB2 glib-2.0)
 
-set(Protobuf_USE_STATIC_LIBS ON)
-include(FindProtobuf)
-find_package(Protobuf REQUIRED)
+# set(Protobuf_USE_STATIC_LIBS ON)
+# include(FindProtobuf)
+# find_package(Protobuf REQUIRED)
+# 
+# # Old CMake does not support static libraries, so we have to patch the library manually
+# string(REPLACE .so .a PROTOBUF_LIBRARIES "${PROTOBUF_LIBRARIES}")
 
-# Old CMake does not support static libraries, so we have to patch the library manually
-string(REPLACE .so .a PROTOBUF_LIBRARIES "${PROTOBUF_LIBRARIES}")
+ExternalProject_Add(nlohmann_json-github
+        PREFIX deps
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.10.5
+        CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR> "-DCMAKE_CXX_FLAGS=-fno-rtti -fno-exceptions" -DJSON_BuildTests=OFF)
+ExternalProject_Get_Property(nlohmann_json-github INSTALL_DIR)
+file(MAKE_DIRECTORY ${INSTALL_DIR}/include)
+add_library(nlohmann_json IMPORTED INTERFACE)
+set_target_properties(nlohmann_json PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES ${INSTALL_DIR}/include
+)
+add_dependencies(nlohmann_json nlohmann_json-github)
 
 find_package(LLVM REQUIRED)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
@@ -82,15 +96,16 @@ endif()
 
 add_definitions(${LLVM_DEFINITIONS})
 
+
 include_directories("include"
+                    ${INSTALL_DIR}/include
                     ${CMAKE_CURRENT_SOURCE_DIR}
                     ${LLVM_INCLUDE_DIRS}
                     ${LIBCPU_SRC_DIR}
                     ${S2EPLUGINS_SRC_DIR}
                     ${VMI_INCLUDE_DIR}
                     ${LIBQ_INCLUDE_DIR}
-                    ${FSIGCXX_INCLUDE_DIR}
-                    ${PROTOBUF_INCLUDE_DIRS})
+                    ${FSIGCXX_INCLUDE_DIR})
 
 link_directories(${VMI_LIBRARY_DIR} ${FSIGCXX_LIBRARY_DIR} ${LIBQ_LIBRARY_DIR})
 
@@ -103,8 +118,8 @@ llvm_map_components_to_libnames(LLVM_LIBS core
                                           x86desc
                                           x86info)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Werror")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -Werror")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Werror -fno-rtti -g")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -Werror -fno-rtti -g")
 
 add_subdirectory(lib)
 add_subdirectory(tools)

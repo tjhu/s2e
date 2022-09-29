@@ -31,11 +31,13 @@
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Scalar/GVN.h>
 #include <sstream>
+#include <fstream>
 
 #include "Translator.h"
 
 #include "lib/Utils/Log.h"
 #include "lib/Utils/Utils.h"
+#include <nlohmann/json.hpp>
 
 #include <tcg/tcg-llvm.h>
 
@@ -331,6 +333,142 @@ uint64_t Translator::getRegisterBitMask(llvm::Value *gepv) {
     return 0;
 }
 
+void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, const std::string &cfgJson) {
+    std::ifstream i(cfgJson);
+    nlohmann::json j;
+    i >> j;
+
+    std::unordered_map<uint64_t, std::string> bb_map;
+    std::vector<std::pair<uint64_t, std::string>> worklist = {};
+    for (const auto &func : j.items()) {
+        for (const auto &bb : func.value()["bbs"]) {
+            if (bb["end"] == 0) {
+                worklist.push_back(std::make_pair(bb["start"], func.key()));
+            } else {
+                bb_map[bb["start"]] = func.key();
+            }
+        }
+    }
+
+    while (!worklist.empty()) {
+        auto back = worklist.back();
+
+        auto bb_start = back.first;
+        worklist.pop_back();
+
+        // We have already parsed this TB. No more exploration needed here
+        if (bb_map.find(bb_start) != bb_map.end()) {
+            continue;
+        }
+
+        TranslatedBlock *tb = translate(bb_start, 0);
+        auto info = m_ctx->getTbInfo();
+        
+        std::vector<std::pair<uint64_t, ETranslationBlockType>> succs{}, call_succs{};
+        bool is_ret = false;
+
+        switch (tb->getType()) {
+            case BB_JMP:
+                succs.push_back(std::make_pair(info.staticBranchTargets[0], TB_JMP));
+                break;
+
+            case BB_COND_JMP:
+                succs.push_back(std::make_pair(info.staticBranchTargets[0], TB_COND_JMP));
+                succs.push_back(std::make_pair(info.staticBranchTargets[1], TB_COND_JMP));
+                break;
+
+            case BB_CALL:
+                call_succs.push_back(std::make_pair(info.staticBranchTargets[0], TB_CALL));
+                succs.push_back(std::make_pair(bb_start + tb->getSize(), TB_JMP));
+                break;
+
+            case BB_REP:
+                succs.push_back(std::make_pair(info.staticBranchTargets[0], TB_REP));
+                succs.push_back(std::make_pair(info.staticBranchTargets[1], TB_REP));
+                break;
+
+            case BB_RET:
+                is_ret = true;
+                break;
+
+            // Cant handle indirect jumps/calls
+            case BB_JMP_IND:
+            case BB_CALL_IND:
+            case BB_COND_JMP_IND:
+            // Nohing to handle
+            case BB_EXCP:
+            case BB_DEFAULT:
+                break;
+        }
+
+        LOGERROR("Fixing block: 0x" << hexval(bb_start) << "\n");
+
+        nlohmann::json new_tb = {};
+        new_tb["start"] = bb_start;
+        new_tb["end"] = tb->getLastAddress();
+        new_tb["size"] = tb->getSize();
+        new_tb["is_ret"] = is_ret;
+        new_tb["succs"] = nlohmann::json::array();
+        new_tb["call_succs"] = nlohmann::json::array();
+
+        for (auto succ : succs) {
+            nlohmann::json j_succ = {};
+            j_succ["addr"] = succ.first;
+            j_succ["type"] = succ.second;
+            new_tb["succs"].push_back(j_succ);
+
+            auto it = bb_map.find(succ.first);
+            if (it == bb_map.end()) {
+                worklist.push_back(std::make_pair(succ.first, back.second));
+            }
+        }
+
+        for (auto call_succ : call_succs) {
+            nlohmann::json j_succ = {};
+            j_succ["addr"] = call_succ.first;
+            j_succ["type"] = call_succ.second;
+            new_tb["call_succs"].push_back(j_succ);
+
+            auto it = bb_map.find(call_succ.first);
+            if (it == bb_map.end()) {
+                worklist.push_back(std::make_pair(call_succ.first, std::to_string(call_succ.first)));
+            }
+        }
+
+        auto jit = j.find(back.second);
+        if (jit == j.end()) {
+            nlohmann::json new_f = {};
+            new_f["bbs"] = nlohmann::json::array();
+            std::stringstream ss;
+            ss << std::hex << bb_start;
+            new_f["name"] = std::string("fcn.") + ss.str();
+            new_f["ret_blocks"] = nlohmann::json::array();
+            j[back.second] = new_f;
+        }
+
+        bool found = false;
+        for (auto &bb : j[back.second]["bbs"]) {
+            if (bb["start"] == bb_start) {
+                found = true;
+                bb = new_tb;
+                break;
+            }
+        }
+
+        if (!found) {
+            j[back.second]["bbs"].push_back(new_tb);
+        }
+
+        bb_map.insert({bb_start, back.second});
+    }
+
+    i.close();
+
+    // Write back!
+    std::ofstream o{cfgJson, std::ios::trunc};
+    o << j.dump(4);
+}
+
 /*****************************************************************************/
 
 const char *X86Translator::s_regNames[8] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
@@ -342,15 +480,15 @@ X86Translator::X86Translator(const std::string &bitcodeLibrary, const std::share
 
     // We need this passes to simplify the translation of the instruction.
     // The code is quite bulky, the fewer instructions, the better.
-    m_functionOptPasses = new legacy::FunctionPassManager(m_ctx->getModule());
+    // m_functionOptPasses = new legacy::FunctionPassManager(m_ctx->getModule());
     // m_functionOptPasses->add(createVerifierPass());
-    m_functionOptPasses->add(createDeadCodeEliminationPass());
-    m_functionOptPasses->add(createGVNPass());
+    // m_functionOptPasses->add(createDeadCodeEliminationPass());
+    // m_functionOptPasses->add(createGVNPass());
 }
 
 X86Translator::~X86Translator() {
     delete m_functionPasses;
-    delete m_functionOptPasses;
+    // delete m_functionOptPasses;
 }
 
 static const uint64_t I486_FEATURES = (CPUID_FP87 | CPUID_VME | CPUID_PSE);
@@ -391,6 +529,7 @@ static const uint64_t TCG_EXT2_FEATURES = ((TCG_FEATURES & EXT2_FEATURE_MASK) | 
 CPUID_EXT2_PDPE1GB */
 static const uint64_t TCG_EXT3_FEATURES =
     (CPUID_EXT3_LAHF_LM | CPUID_EXT3_SVM | CPUID_EXT3_CR8LEG | CPUID_EXT3_ABM | CPUID_EXT3_SSE4A);
+
 
 TranslatedBlock *X86Translator::translate(uint64_t address, uint64_t lastAddress) {
     static uint8_t s_dummyBuffer[10 * 1024 * 1024];
@@ -526,7 +665,9 @@ TranslatedBlock *X86Translator::translate(uint64_t address, uint64_t lastAddress
         case TB_REP:
             if (info.staticBranchTargets.size() != 2) {
                 LOGERROR("TB " << hexval(address) << " static targets mismatch TB type\n");
-                return NULL;
+                LOGERROR("Most likely an opaque predicate was found, which was folded away by generated LLVM\n");
+                LOGERROR("We will still continue to translate\n");
+                // return NULL;
             }
             break;
 
@@ -540,6 +681,7 @@ TranslatedBlock *X86Translator::translate(uint64_t address, uint64_t lastAddress
         case TB_SYSENTER:
             if (info.staticBranchTargets.size() != 0) {
                 LOGERROR("TB " << hexval(address) << " static targets mismatch TB type\n");
+                LOGERROR("Most likely " << hexval(address) << " ends in exception instruction\n");
                 return NULL;
             }
             break;
@@ -559,10 +701,12 @@ TranslatedBlock *X86Translator::translate(uint64_t address, uint64_t lastAddress
            it runs out of buffer space. Could split the BB in multiple chunks. */
         LOGERROR("Translation didn't finish at bb end (" << hexval(tb->pcOfLastInstr) << " instead of "
                                                          << hexval(lastAddress) << ")\n");
-
-        return NULL;
+        LOGERROR("We will still continue to translate.\n");
     }
-    assert(tb->pcOfLastInstr == lastAddress);
+
+    // Removing this assertion for now!
+    // assert(tb->pcOfLastInstr == lastAddress);
+    lastAddress = tb->pcOfLastInstr;
 
     /* Handle call $+5 instructions, used to push the address of the next instruction */
     if (tb->se_tb_type == TB_CALL) {
@@ -576,7 +720,7 @@ TranslatedBlock *X86Translator::translate(uint64_t address, uint64_t lastAddress
     TranslatedBlock *ret = new TranslatedBlock(address, lastAddress, tb->size, (Function *) tb->llvm_function, bbType,
                                                info.staticBranchTargets, info.pcAssignments);
 
-    m_functionPasses->run(*ret->getFunction());
+    // m_functionPasses->run(*ret->getFunction());
 
     for (auto const &branchTarget : info.staticBranchTargets) {
         LOGDEBUG("Branch target: " << hexval(branchTarget) << "\n");

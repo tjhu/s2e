@@ -38,6 +38,8 @@ namespace llvm {
 ///
 bool ParseMcSemaCfgFile(const std::string &file, BinaryBasicBlocks &basicBlocks, BinaryFunctions &functions);
 
+bool ParseExternalCfgFile(const std::string &file, BinaryBasicBlocks &basicBlocks, BinaryFunctions &functions);
+
 ///
 /// \brief Parse a basic block information file produced by the S2E analysis
 /// tool.

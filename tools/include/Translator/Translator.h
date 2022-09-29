@@ -218,6 +218,8 @@ public:
         return m_binary;
     }
 
+    TCGLLVMTranslator *getContext();
+
     virtual TranslatedBlock *translate(uint64_t address, uint64_t lastAddress) = 0;
 
     bool isInitialized() {
@@ -252,6 +254,8 @@ public:
 
     static RegisterMask getRegisterMaskForHelper(llvm::Function *helper);
     static uint64_t getRegisterBitMask(llvm::Value *gep);
+
+    void exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, const std::string &cfgJson);
 };
 
 class X86Translator : public Translator {
@@ -284,6 +288,7 @@ public:
         assert(reg < 8);
         return s_regNames[reg];
     }
+
 };
 } // namespace s2etools
 

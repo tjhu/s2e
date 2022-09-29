@@ -19,7 +19,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-add_definitions(-D__STDC_FORMAT_MACROS -D_GNU_SOURCE -DNEED_CPU_H
+add_definitions(-D__STDC_FORMAT_MACROS -D_GNU_SOURCE -DNEED_CPU_H -O0 -g
                 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -DSTATIC_TRANSLATOR
                 -DTARGET_PHYS_ADDR_BITS=64 -DCONFIG_SYMBEX -DCONFIG_SOFTMMU -DCPU_TEMP_BUF_NLONGS=128
                 -DTARGET_LONG_BITS=32 -DTARGET_INSN_START_EXTRA_WORDS=1)
@@ -57,4 +57,4 @@ target_include_directories(X86Translator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(X86Translator PRIVATE -Wredundant-decls -w -Wundef
                        -Wendif-labels -Wwrite-strings -fno-strict-aliasing
                        -Wno-sign-compare -Wno-missing-field-initializers
-                       -fexceptions)
+                       -fexceptions -O0 -g)

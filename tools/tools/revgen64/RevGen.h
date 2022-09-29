@@ -94,6 +94,7 @@ public:
     bool initialize(void);
 
     void translate(const llvm::BinaryFunctions &functions, const llvm::BinaryBasicBlocks &tbs);
+    void exploreCfg(const std::string &cfgJson);
 
     TranslatedBlock *translate(uint64_t start, uint64_t end);
 

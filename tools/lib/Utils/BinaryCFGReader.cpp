@@ -26,120 +26,69 @@
 #include <stdio.h>
 
 #include <llvm/Support/raw_ostream.h>
+#include <nlohmann/json.hpp>
 
-#include "cfg.pb.h"
+// #include "cfg.pb.h"
 
 #include "BinaryCFGReader.h"
 
 namespace llvm {
 
-static bool IsTerminatorInstruction(const std::string &bytes) {
-    if (bytes.empty()) {
-        return false;
-    }
+// static bool IsTerminatorInstruction(const std::string &bytes) {
+//     if (bytes.empty()) {
+//         return false;
+//     }
+// 
+//     const uint8_t TERMINATOR_OPCODES[9] = {
+//         0xF4, // HLT
+//         0xFF, // CALL
+//         0xE8, // CALL
+//         0x9A, // CALL
+//         0xCC, // INT
+//         0xCD, // INT
+//         0xCE, // INT
+//         0xF2, // REPNE
+//         0xF3  // REPE
+//     };
+// 
+//     for (auto const &opcode : TERMINATOR_OPCODES) {
+//         if ((uint8_t) bytes[0] == opcode) {
+//             return true;
+//         }
+//     }
+// 
+//     return false;
+// }
 
-    const uint8_t TERMINATOR_OPCODES[9] = {
-        0xF4, // HLT
-        0xFF, // CALL
-        0xE8, // CALL
-        0x9A, // CALL
-        0xCC, // INT
-        0xCD, // INT
-        0xCE, // INT
-        0xF2, // REPNE
-        0xF3  // REPE
-    };
+bool ParseExternalCfgFile(const std::string &file, BinaryBasicBlocks &bbs, BinaryFunctions &functions) {
+    std::ifstream i(file);
+    nlohmann::json j;
+    i >> j;
 
-    for (auto const &opcode : TERMINATOR_OPCODES) {
-        if ((uint8_t) bytes[0] == opcode) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-bool ParseMcSemaCfgFile(const std::string &file, BinaryBasicBlocks &bbs, BinaryFunctions &functions) {
-    std::ifstream input(file);
-    mcsema::Module module;
-
-    if (!module.ParseFromIstream(&input)) {
-        llvm::errs() << "Parsing McSema module failed\n";
-
-        return false;
-    }
-
-    for (const mcsema::Function &f : module.internal_funcs()) {
-        std::stringstream ss;
-
-        if (!f.name().empty()) {
-            ss << f.name();
-        } else {
-            ss << "sub_" << hexval(f.entry_address());
-        }
-
-        BinaryFunction *bf = new BinaryFunction(ss.str());
+    for (const auto &func : j.items()) {
+        BinaryFunction *bf = new BinaryFunction(func.value()["name"]);
         functions.insert(bf);
 
-        for (const mcsema::Block &b : f.blocks()) {
-            if (b.insts_size() == 0) {
-                continue;
+        for (const auto &bb : func.value()["bbs"]) {
+            // errs() << "Analyzing : " << hexval(bb["start"]) << ":" << hexval(bb["end"]) << ":" << func.key() << "\n";
+            BinaryBasicBlock *binaryBb = new BinaryBasicBlock(bb["start"], bb["end"], bb["size"]);
+            bbs.insert(binaryBb);
+
+            if (binaryBb->getStartPc() == stoi(func.key())) {
+                bf->setEntryBlock(binaryBb);
             }
 
-            auto iit_begin = b.insts().begin();
-            auto iit_end = b.insts().end();
-            auto iit = iit_begin;
-
-            do {
-                // Set default base address in case block turns out to be empty
-                int64_t base_addr = b.base_address();
-                int64_t last_addr;
-                int64_t size = 0;
-
-                if (iit != iit_end) {
-                    base_addr = (*iit).inst_addr();
-                }
-
-                while (iit != iit_end) {
-                    const mcsema::Instruction &i = *iit;
-                    last_addr = i.inst_addr();
-                    size += i.inst_len();
-                    ++iit;
-
-                    // The blocks returned by mcsema might not be properly
-                    // terminated on instructions that change control flow
-                    // such as calls, interrupts, etc. Split the blocks here.
-                    if (IsTerminatorInstruction(i.inst_bytes())) {
-                        break;
-                    }
-                }
-
-                assert(base_addr <= last_addr);
-                BinaryBasicBlock *binaryBb = new BinaryBasicBlock(base_addr, last_addr, size);
-                bbs.insert(binaryBb);
-
-                if (binaryBb->getStartPc() == (uint64_t) f.entry_address()) {
-                    bf->setEntryBlock(binaryBb);
-                }
-
-                bf->add(binaryBb);
-            } while (iit != iit_end);
+            bf->add(binaryBb);
         }
 
-        // Go again through the list to update the successors
-        for (const mcsema::Block &b : f.blocks()) {
-            if (b.insts_size() == 0) {
-                continue;
-            }
-
-            BinaryBasicBlock *binaryBb = bbs.find(b.base_address());
+        for (const auto &bb : func.value()["bbs"]) {
+            BinaryBasicBlock *binaryBb = bbs.find(bb["start"]);
             assert(binaryBb);
 
-            for (uint64_t follow : b.block_follows()) {
-                BinaryBasicBlock *bb = bbs.find(follow);
+            for (const auto &succ : bb["succs"]) {
+                BinaryBasicBlock *bb = bbs.find(succ["addr"]);
                 if (!bb) {
-                    llvm::errs() << "Block " << hexval(b.base_address()) << " has incorrect follower " << hexval(follow)
-                                 << "\n";
+                    llvm::errs() << "Block " << hexval(stoi(func.key())) << " has incorrect succs " << hexval(succ["addr"]) << "\n";
                     continue;
                 }
 
@@ -148,8 +97,103 @@ bool ParseMcSemaCfgFile(const std::string &file, BinaryBasicBlocks &bbs, BinaryF
             }
         }
     }
-    return true;
+
+    return false;
 }
+
+bool ParseMcSemaCfgFile(const std::string &file, BinaryBasicBlocks &bbs, BinaryFunctions &functions) {
+    return false;
+}
+//     std::ifstream input(file);
+//     mcsema::Module module;
+// 
+//     if (!module.ParseFromIstream(&input)) {
+//         llvm::errs() << "Parsing McSema module failed\n";
+// 
+//         return false;
+//     }
+// 
+//     for (const mcsema::Function &f : module.internal_funcs()) {
+//         std::stringstream ss;
+// 
+//         if (!f.name().empty()) {
+//             ss << f.name();
+//         } else {
+//             ss << "sub_" << hexval(f.entry_address());
+//         }
+// 
+//         BinaryFunction *bf = new BinaryFunction(ss.str());
+//         functions.insert(bf);
+// 
+//         for (const mcsema::Block &b : f.blocks()) {
+//             if (b.insts_size() == 0) {
+//                 continue;
+//             }
+// 
+//             auto iit_begin = b.insts().begin();
+//             auto iit_end = b.insts().end();
+//             auto iit = iit_begin;
+// 
+//             do {
+//                 // Set default base address in case block turns out to be empty
+//                 int64_t base_addr = b.base_address();
+//                 int64_t last_addr;
+//                 int64_t size = 0;
+// 
+//                 if (iit != iit_end) {
+//                     base_addr = (*iit).inst_addr();
+//                 }
+// 
+//                 while (iit != iit_end) {
+//                     const mcsema::Instruction &i = *iit;
+//                     last_addr = i.inst_addr();
+//                     size += i.inst_len();
+//                     ++iit;
+// 
+//                     // The blocks returned by mcsema might not be properly
+//                     // terminated on instructions that change control flow
+//                     // such as calls, interrupts, etc. Split the blocks here.
+//                     if (IsTerminatorInstruction(i.inst_bytes())) {
+//                         break;
+//                     }
+//                 }
+// 
+//                 assert(base_addr <= last_addr);
+//                 BinaryBasicBlock *binaryBb = new BinaryBasicBlock(base_addr, last_addr, size);
+//                 bbs.insert(binaryBb);
+// 
+//                 if (binaryBb->getStartPc() == (uint64_t) f.entry_address()) {
+//                     bf->setEntryBlock(binaryBb);
+//                 }
+// 
+//                 bf->add(binaryBb);
+//             } while (iit != iit_end);
+//         }
+// 
+//         // Go again through the list to update the successors
+//         for (const mcsema::Block &b : f.blocks()) {
+//             if (b.insts_size() == 0) {
+//                 continue;
+//             }
+// 
+//             BinaryBasicBlock *binaryBb = bbs.find(b.base_address());
+//             assert(binaryBb);
+// 
+//             for (uint64_t follow : b.block_follows()) {
+//                 BinaryBasicBlock *bb = bbs.find(follow);
+//                 if (!bb) {
+//                     llvm::errs() << "Block " << hexval(b.base_address()) << " has incorrect follower " << hexval(follow)
+//                                  << "\n";
+//                     continue;
+//                 }
+// 
+//                 binaryBb->addSucc(bb);
+//                 bb->addPred(binaryBb);
+//             }
+//         }
+//     }
+//     return true;
+// }
 
 bool ParseBBInfoFile(const std::string &file, BinaryBasicBlocks &bbs) {
     const unsigned MAX_LINE = 512;
