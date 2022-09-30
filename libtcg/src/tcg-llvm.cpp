@@ -351,7 +351,6 @@ void TCGLLVMTranslator::setValue(TCGArg arg, Value *v) {
         assert(idx < m_tcgContext->nb_globals);
         // We need to save a global copy of a value
         m_builder.CreateStore(v, getPtrForValue(idx));
-
         if (tmp->fixed_reg) {
             /* Invalidate all dependent global vals and pointers */
             assert(false);
@@ -552,6 +551,7 @@ void TCGLLVMTranslator::generateQemuCpuStore(const TCGArg *args, unsigned memBit
     StoreInst *s = m_builder.CreateStore(m_builder.CreateTrunc(valueToStore, intType(memBits)), v);
     if (isPcAssignment(gep)) {
         m_info.pcAssignments.push_back(s);
+        attachCurrentPc(s);
     }
 #else
     m_builder.CreateStore(m_builder.CreateTrunc(valueToStore, intType(memBits)), v);
@@ -658,14 +658,16 @@ int TCGLLVMTranslator::generateOperation(const TCGOp *op) {
             std::string funcName = std::string("helper_") + helperName;
             Function *helperFunc = m_module->getFunction(funcName);
 
-#ifndef STATIC_TRANSLATOR
+// #ifndef STATIC_TRANSLATOR
+// Removing this for now, since we can remove the dynamic symbol as appropriate in BinRec
+// Creates problems for the "ud2" instruction - mcf
             if (!helperFunc) {
                 helperFunc = Function::Create(FunctionType::get(retType, argTypes, false), Function::ExternalLinkage,
                                               funcName, m_module.get());
                 /* XXX: Why do we need this ? */
                 sys::DynamicLibrary::AddSymbol(funcName, (void *) helperAddress);
             }
-#endif
+// #endif
 
             FunctionType *FTy = cast<FunctionType>(cast<PointerType>(helperFunc->getType())->getPointerElementType());
 
@@ -1159,6 +1161,13 @@ Function *TCGLLVMTranslator::generateCode(TCGContext *s, TranslationBlock *tb) {
 #if defined(STATIC_TRANSLATOR)
             case INDEX_op_insn_start: {
                 m_currentPc = op->args[0] - tb->cs_base;
+
+                /// BINREC Changes
+                unsigned memBits = m_tcgContext->env_sizeof_eip * 8;
+
+                Value *v = m_builder.CreatePointerCast(m_eip, intType(memBits)->getPointerTo());
+                Value *valueToStore = ConstantInt::get(wordType(), m_currentPc);
+                m_builder.CreateStore(m_builder.CreateTrunc(valueToStore, intType(memBits)), v);
             } break;
 #elif defined(CONFIG_SYMBEX)
             case INDEX_op_insn_start: {

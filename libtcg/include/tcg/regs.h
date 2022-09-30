@@ -14,7 +14,7 @@ typedef union {
     uint32_t _l[2];
     float32 _s[2];
     uint64_t q;
-} MMXReg;
+} __attribute__((aligned(8))) MMXReg;
 
 typedef union {
     uint8_t _b[16];
@@ -23,6 +23,6 @@ typedef union {
     uint64_t _q[2];
     float32 _s[4];
     float64 _d[2];
-} XMMReg;
+} __attribute__((aligned(8))) XMMReg;
 
 #endif
