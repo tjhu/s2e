@@ -48,7 +48,7 @@ namespace vmi {
 /// \tparam PhdrT The program header type. The program header format is different depending on whether the ELF file is
 ///               32 or 64 bits
 ///
-template <typename EhdrT, typename PhdrT> class ELFFile : public ExecutableFile {
+template <typename EhdrT, typename PhdrT, typename ShdrT> class ELFFile : public ExecutableFile {
 private:
     char *m_elfBuffer;
     Elf *m_elf;
@@ -58,8 +58,10 @@ private:
     uint64_t m_pointerSize;
     std::string m_moduleName;
     Sections m_sections;
+    bool m_isRelocatable;
 
     std::vector<PhdrT> m_phdrs;
+    std::vector<ShdrT> m_shdrs;
 
     bool initLibelf();
     int getSectionIndex(uint64_t va) const;
@@ -67,6 +69,7 @@ private:
 protected:
     virtual EhdrT *getEhdr(Elf *elf) const = 0;
     virtual PhdrT *getPhdr(Elf *elf) const = 0;
+    virtual ShdrT *getShdr(Elf_Scn *scn) const = 0;
 
 public:
     ELFFile(std::shared_ptr<FileProvider> file, bool loaded, uint64_t loadAddress, unsigned pointerSize);
@@ -95,10 +98,11 @@ public:
 ///
 /// \brief 32-bit ELF file.
 ///
-class ELFFile32 : public ELFFile<Elf32_Ehdr, Elf32_Phdr> {
+class ELFFile32 : public ELFFile<Elf32_Ehdr, Elf32_Phdr, Elf32_Shdr> {
 protected:
     virtual Elf32_Ehdr *getEhdr(Elf *elf) const;
     virtual Elf32_Phdr *getPhdr(Elf *elf) const;
+    virtual Elf32_Shdr *getShdr(Elf_Scn *scn) const;
 
 public:
     ELFFile32(std::shared_ptr<FileProvider> file, bool loaded, uint64_t loadAddress);
@@ -109,10 +113,11 @@ public:
 ///
 /// \brief 64-bit ELF file.
 ///
-class ELFFile64 : public ELFFile<Elf64_Ehdr, Elf64_Phdr> {
+class ELFFile64 : public ELFFile<Elf64_Ehdr, Elf64_Phdr, Elf64_Shdr> {
 protected:
     virtual Elf64_Ehdr *getEhdr(Elf *elf) const;
     virtual Elf64_Phdr *getPhdr(Elf *elf) const;
+    virtual Elf64_Shdr *getShdr(Elf_Scn *scn) const;
 
 public:
     ELFFile64(std::shared_ptr<FileProvider> file, bool loaded, uint64_t loadAddress);
@@ -122,14 +127,14 @@ public:
 
 /***************************************************/
 
-template <typename EhdrT, typename PhdrT>
-ELFFile<EhdrT, PhdrT>::ELFFile(std::shared_ptr<FileProvider> file, bool loaded, uint64_t loadAddress,
+template <typename EhdrT, typename PhdrT, typename ShdrT>
+ELFFile<EhdrT, PhdrT, ShdrT>::ELFFile(std::shared_ptr<FileProvider> file, bool loaded, uint64_t loadAddress,
                                unsigned pointerSize)
     : ExecutableFile(file, loaded, loadAddress), m_elf(nullptr), m_imageSize(0), m_entryPoint(0),
       m_pointerSize(pointerSize), m_moduleName(llvm::sys::path::filename(std::string(file->getName()))) {
 }
 
-template <typename EhdrT, typename PhdrT> ELFFile<EhdrT, PhdrT>::~ELFFile() {
+template <typename EhdrT, typename PhdrT, typename ShdrT> ELFFile<EhdrT, PhdrT, ShdrT>::~ELFFile() {
     if (m_elf) {
         elf_end(m_elf);
         m_elf = nullptr;
@@ -140,9 +145,9 @@ template <typename EhdrT, typename PhdrT> ELFFile<EhdrT, PhdrT>::~ELFFile() {
     }
 }
 
-template <typename EhdrT, typename PhdrT>
+template <typename EhdrT, typename PhdrT, typename ShdrT>
 template <typename ELF_T, unsigned ELFClass>
-std::shared_ptr<ELF_T> ELFFile<EhdrT, PhdrT>::get(std::shared_ptr<FileProvider> file, bool loaded,
+std::shared_ptr<ELF_T> ELFFile<EhdrT, PhdrT, ShdrT>::get(std::shared_ptr<FileProvider> file, bool loaded,
                                                   uint64_t loadAddress) {
     uint8_t e_ident[EI_NIDENT];
 
@@ -177,7 +182,7 @@ std::shared_ptr<ELF_T> ELFFile<EhdrT, PhdrT>::get(std::shared_ptr<FileProvider> 
     return nullptr;
 }
 
-template <typename EhdrT, typename PhdrT> bool ELFFile<EhdrT, PhdrT>::initLibelf() {
+template <typename EhdrT, typename PhdrT, typename ShdrT> bool ELFFile<EhdrT, PhdrT, ShdrT>::initLibelf() {
     // Initialize the ELF version
     if (elf_version(EV_CURRENT) == EV_NONE) {
         return false;
@@ -221,7 +226,7 @@ error:
     return false;
 }
 
-template <typename EhdrT, typename PhdrT> bool ELFFile<EhdrT, PhdrT>::initialize() {
+template <typename EhdrT, typename PhdrT, typename ShdrT> bool ELFFile<EhdrT, PhdrT, ShdrT>::initialize() {
     if (!initLibelf()) {
         return false;
     }
@@ -234,89 +239,151 @@ template <typename EhdrT, typename PhdrT> bool ELFFile<EhdrT, PhdrT>::initialize
 
     // Number of ELF program headers
     size_t numPhdrs;
-    if (elf_getphdrnum(m_elf, &numPhdrs) != 0) {
+    size_t numShdrs;
+
+    elf_getphdrnum(m_elf, &numPhdrs);
+    elf_getshdrnum(m_elf, &numShdrs);
+
+    if (!numPhdrs && !numShdrs) {
         return false;
     }
 
-    std::vector<uint64_t> addresses;
-    uint64_t imageSize = 0;
-    PhdrT *phdr = getPhdr(m_elf);
+    if (numPhdrs) {
+        m_isRelocatable = false;
+        std::vector<uint64_t> addresses;
+        uint64_t imageSize = 0;
+        PhdrT *phdr = getPhdr(m_elf);
 
-    for (unsigned i = 0; i < numPhdrs; ++i, ++phdr) {
-        SectionDescriptor sd;
+        for (unsigned i = 0; i < numPhdrs; ++i, ++phdr) {
+            SectionDescriptor sd;
 
-        if (phdr->p_type == PT_LOAD) {
-            imageSize += phdr->p_memsz;
-            sd.loadable = true;
+            if (phdr->p_type == PT_LOAD) {
+                imageSize += phdr->p_memsz;
+                sd.loadable = true;
+            }
+
+            std::stringstream ss;
+            ss << "section_" << i;
+
+            sd.readable = phdr->p_flags & PF_R;
+            sd.writable = phdr->p_flags & PF_W;
+            sd.executable = phdr->p_flags & PF_X;
+
+            sd.start = phdr->p_vaddr;
+            sd.physStart = phdr->p_paddr;
+            sd.size = phdr->p_filesz;
+            sd.virtualSize = phdr->p_memsz;
+            sd.name = ss.str();
+
+            m_sections.push_back(sd);
+            m_phdrs.push_back(*phdr);
         }
 
-        std::stringstream ss;
-        ss << "section_" << i;
+        m_imageSize = imageSize;
+        m_entryPoint = ehdr->e_entry;
 
-        sd.readable = phdr->p_flags & PF_R;
-        sd.writable = phdr->p_flags & PF_W;
-        sd.executable = phdr->p_flags & PF_X;
+        return true;
+    } else {
+        m_isRelocatable = true;
+        std::vector<uint64_t> addresses;
 
-        sd.start = phdr->p_vaddr;
-        sd.physStart = phdr->p_paddr;
-        sd.size = phdr->p_filesz;
-        sd.virtualSize = phdr->p_memsz;
-        sd.name = ss.str();
+        for (unsigned i = 0; i < numShdrs; ++i) {
+            SectionDescriptor sd;
 
-        m_sections.push_back(sd);
-        m_phdrs.push_back(*phdr);
+            auto *scn = elf_getscn(m_elf, i);
+            auto *shdr = getShdr(scn);
+
+            if (shdr->sh_type == SHT_PROGBITS) {
+                // ignoring imageSize
+                sd.loadable = true;
+            }
+
+            std::stringstream ss;
+            ss << "section_" << i;
+
+            // is this correct? nobody reads this anyway
+            sd.readable = true;
+            sd.writable = shdr->sh_flags & SHF_WRITE;
+            sd.executable = shdr->sh_flags & SHF_EXECINSTR;
+
+            sd.start = shdr->sh_addr;
+            sd.physStart = shdr->sh_offset;
+            sd.size = shdr->sh_size;
+            // virtual size == size ? nobody reads this anyway
+            sd.virtualSize = sd.size;
+            sd.name = ss.str();
+
+            m_sections.push_back(sd);
+            m_shdrs.push_back(*shdr);
+        }
+
+        // nobody reads these anyway
+        m_imageSize = 0;
+        m_entryPoint = 0;
+
+        return true;
     }
-
-    m_imageSize = imageSize;
-    m_entryPoint = ehdr->e_entry;
-
-    return true;
 }
 
-template <typename EhdrT, typename PhdrT> std::string ELFFile<EhdrT, PhdrT>::getModuleName() const {
+template <typename EhdrT, typename PhdrT, typename ShdrT> std::string ELFFile<EhdrT, PhdrT, ShdrT>::getModuleName() const {
     return m_moduleName;
 }
 
-template <typename EhdrT, typename PhdrT> uint64_t ELFFile<EhdrT, PhdrT>::getImageBase() const {
+template <typename EhdrT, typename PhdrT, typename ShdrT> uint64_t ELFFile<EhdrT, PhdrT, ShdrT>::getImageBase() const {
     return 0;
 }
 
-template <typename EhdrT, typename PhdrT> uint64_t ELFFile<EhdrT, PhdrT>::getImageSize() const {
+template <typename EhdrT, typename PhdrT, typename ShdrT> uint64_t ELFFile<EhdrT, PhdrT, ShdrT>::getImageSize() const {
     return m_imageSize;
 }
 
-template <typename EhdrT, typename PhdrT> uint64_t ELFFile<EhdrT, PhdrT>::getEntryPoint() const {
+template <typename EhdrT, typename PhdrT, typename ShdrT> uint64_t ELFFile<EhdrT, PhdrT, ShdrT>::getEntryPoint() const {
     return m_entryPoint;
 }
 
-template <typename EhdrT, typename PhdrT>
-bool ELFFile<EhdrT, PhdrT>::getSymbolAddress(const std::string &name, uint64_t *address) {
+template <typename EhdrT, typename PhdrT, typename ShdrT>
+bool ELFFile<EhdrT, PhdrT, ShdrT>::getSymbolAddress(const std::string &name, uint64_t *address) {
     return false;
 }
 
-template <typename EhdrT, typename PhdrT>
-bool ELFFile<EhdrT, PhdrT>::getSourceInfo(uint64_t addr, std::string &source, uint64_t &line, std::string &function) {
+template <typename EhdrT, typename PhdrT, typename ShdrT>
+bool ELFFile<EhdrT, PhdrT, ShdrT>::getSourceInfo(uint64_t addr, std::string &source, uint64_t &line, std::string &function) {
     return false;
 }
 
-template <typename EhdrT, typename PhdrT> unsigned ELFFile<EhdrT, PhdrT>::getPointerSize() const {
+template <typename EhdrT, typename PhdrT, typename ShdrT> unsigned ELFFile<EhdrT, PhdrT, ShdrT>::getPointerSize() const {
     return m_pointerSize;
 }
 
-template <typename EhdrT, typename PhdrT> int ELFFile<EhdrT, PhdrT>::getSectionIndex(uint64_t va) const {
-    for (unsigned i = 0; i < m_phdrs.size(); ++i) {
-        const PhdrT &phdr = m_phdrs[i];
+// XXX: HACK ! Default load address
+uint64_t rebaseAddr(uint64_t addr) {
+    return 0x08000000 + addr;
+}
 
-        if (va >= phdr.p_vaddr && va < phdr.p_vaddr + phdr.p_memsz) {
-            return i;
+template <typename EhdrT, typename PhdrT, typename ShdrT> int ELFFile<EhdrT, PhdrT, ShdrT>::getSectionIndex(uint64_t va) const {
+    if (m_isRelocatable) {
+        for (unsigned i = 0; i < m_shdrs.size(); ++i) {
+            const ShdrT &shdr = m_shdrs[i];
+
+            if (va >= rebaseAddr(shdr.sh_addr) && va < rebaseAddr(shdr.sh_addr) + shdr.sh_size) {
+                return i;
+            }
+        }
+    } else {
+        for (unsigned i = 0; i < m_phdrs.size(); ++i) {
+            const PhdrT &phdr = m_phdrs[i];
+
+            if (va >= phdr.p_vaddr && va < phdr.p_vaddr + phdr.p_memsz) {
+                return i;
+            }
         }
     }
-
+    
     return -1;
 }
 
-template <typename EhdrT, typename PhdrT>
-ssize_t ELFFile<EhdrT, PhdrT>::read(void *buffer, size_t nbyte, off64_t va) const {
+template <typename EhdrT, typename PhdrT, typename ShdrT>
+ssize_t ELFFile<EhdrT, PhdrT, ShdrT>::read(void *buffer, size_t nbyte, off64_t va) const {
     int idx = getSectionIndex(va);
     if (idx < 0) {
         return 0;
@@ -331,13 +398,19 @@ ssize_t ELFFile<EhdrT, PhdrT>::read(void *buffer, size_t nbyte, off64_t va) cons
     if (!sd.loadable) {
         return 0;
     } else {
-        const PhdrT &phdr = m_phdrs[idx];
-        off64_t offset = va - phdr.p_vaddr + phdr.p_offset;
-        return m_file->read(buffer, maxSize, offset);
+        if (m_isRelocatable) {
+            const ShdrT &shdr = m_shdrs[idx];
+            off64_t offset = va - rebaseAddr(shdr.sh_addr) + shdr.sh_offset;
+            return m_file->read(buffer, maxSize, offset);
+        } else {
+            const PhdrT &phdr = m_phdrs[idx];
+            off64_t offset = va - phdr.p_vaddr + phdr.p_offset;
+            return m_file->read(buffer, maxSize, offset);
+        }
     }
 }
 
-template <typename EhdrT, typename PhdrT> const Sections &ELFFile<EhdrT, PhdrT>::getSections() const {
+template <typename EhdrT, typename PhdrT, typename ShdrT> const Sections &ELFFile<EhdrT, PhdrT, ShdrT>::getSections() const {
     return m_sections;
 }
 
@@ -359,6 +432,10 @@ Elf32_Phdr *ELFFile32::getPhdr(Elf *elf) const {
     return elf32_getphdr(elf);
 }
 
+Elf32_Shdr *ELFFile32::getShdr(Elf_Scn *scn) const {
+    return elf32_getshdr(scn);
+}
+
 /***************************************************/
 
 ELFFile64::ELFFile64(std::shared_ptr<FileProvider> file, bool loaded, uint64_t loadAddress)
@@ -376,6 +453,13 @@ Elf64_Ehdr *ELFFile64::getEhdr(Elf *elf) const {
 Elf64_Phdr *ELFFile64::getPhdr(Elf *elf) const {
     return elf64_getphdr(elf);
 }
+
+Elf64_Shdr *ELFFile64::getShdr(Elf_Scn *scn) const {
+    return elf64_getshdr(scn);
+}
+
+/***************************************************/
+
 
 } // namespace vmi
 
