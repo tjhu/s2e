@@ -79,6 +79,7 @@ add_library(
     s2e/Plugins/ExecutionTracers/ExceptionTracer.cpp
     s2e/Plugins/ExecutionTracers/StateSwitchTracer.cpp
     s2e/Plugins/ExecutionTracers/TBCoverageTracer.cpp
+    s2e/Plugins/ExecutionTracers/ControlFlowTracer.cpp
 
     # Symbolic hardware
     s2e/Plugins/SymbolicHardware/SymbolicHardware.cpp

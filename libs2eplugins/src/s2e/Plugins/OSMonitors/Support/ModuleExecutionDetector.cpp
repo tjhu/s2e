@@ -151,15 +151,43 @@ bool ModuleExecutionDetector::exists(const std::string &id, const std::string &n
 
 void ModuleExecutionDetector::moduleLoadListener(S2EExecutionState *state, const ModuleDescriptor &module) {
     // If module name matches the configured ones, activate.
-    getDebugStream(state) << "module loaded: " << module << "\n";
+    //getDebugStream(state) << "module loaded: " << module << "\n";
 
     const ConfiguredModulesByName &byName = m_configuredModules.get<modbyname_t>();
     const auto it = byName.find(module.Name);
     if (it != byName.end()) {
         getInfoStream(state) << "loading id " << it->id << "\n";
         onModuleLoad.emit(state, module);
+        // record address ranges of target module
+        auto range = recordAddrRanges(state, module);
+        target.first = range.first;
+        target.second = range.second;
+        //getInfoStream(state) << "target module = " << target.first << ", " << target.second << "\n";
         return;
     }
+}
+
+std::pair<uint64_t, uint64_t> ModuleExecutionDetector::recordAddrRanges(S2EExecutionState *state, const ModuleDescriptor& module)
+{
+    uint64_t min = UINT64_MAX;
+    uint64_t max = 0;
+    for (const auto &section : module.Sections) {
+        uint64_t start = section.runtimeLoadBase;
+        uint64_t end = section.runtimeLoadBase + section.size;
+
+        std::stringstream s2;
+        //s2 << "section start = " << std::hex << start << ", end = " << std::hex << end;
+        std::string res2 = s2.str();
+        getInfoStream(state) << res2 << "\n";
+
+        if (start < min) {
+            min = start;
+        }
+        if (end > max) {
+            max = end;
+        }
+    }
+    return std::pair<uint64_t, uint64_t>{min, max};
 }
 
 // Check that the module id is valid
@@ -199,6 +227,7 @@ void ModuleExecutionDetector::onTranslateBlockStart(ExecutionSignal *signal, S2E
     if (!currentModule) {
         return;
     }
+    //getInfoStream(state) << "[CD] targetPc " << pc << " : " << currentModule->Name << "\n";
 
     if (m_trackExecution) {
         signal->connect(sigc::bind(sigc::mem_fun(*this, &ModuleExecutionDetector::onExecution), currentModule));
@@ -210,6 +239,20 @@ void ModuleExecutionDetector::onTranslateBlockStart(ExecutionSignal *signal, S2E
 void ModuleExecutionDetector::onTranslateBlockEnd(ExecutionSignal *signal, S2EExecutionState *state,
                                                   TranslationBlock *tb, uint64_t endPc, bool staticTarget,
                                                   uint64_t targetPc) {
+//    std::stringstream s2;
+//    s2 << "target start = " << std::hex << target.first << ", target end = " << std::hex << target.second << "\n";
+//    s2 << "endPc = " << std::hex << endPc << ", targetPc = " << std::hex << targetPc;
+//    std::string res2 = s2.str();
+//    getInfoStream(state) << res2 << "\n";
+
+    // filters currentModule to return module only if belonging to target
+    if (belongsToTarget(endPc) && !belongsToTarget(targetPc)) {         // exiting target = true
+        onExternalTbTransition.emit(signal, state, tb, endPc, staticTarget, targetPc, true);
+    }
+    else if (!belongsToTarget(endPc) && belongsToTarget(targetPc)) {    // exiting target = false
+        onExternalTbTransition.emit(signal, state, tb, endPc, staticTarget, targetPc, false);
+    }
+
     auto currentModule = getCurrentDescriptor(state);
     if (!currentModule) {
         return;
@@ -230,6 +273,10 @@ void ModuleExecutionDetector::onTranslateBlockEnd(ExecutionSignal *signal, S2EEx
     if (currentModule) {
         onModuleTranslateBlockEnd.emit(signal, state, *currentModule, tb, endPc, staticTarget, targetPc);
     }
+}
+
+bool ModuleExecutionDetector::belongsToTarget(uint64_t pc) {
+    return pc >= target.first && pc <= target.second;
 }
 
 void ModuleExecutionDetector::onTranslateBlockComplete(S2EExecutionState *state, TranslationBlock *tb, uint64_t pc) {
