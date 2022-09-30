@@ -170,6 +170,13 @@ static void gen_eob(DisasContext *s);
 static void gen_jmp(DisasContext *s, target_ulong eip);
 static void gen_jmp_tb(DisasContext *s, target_ulong eip, int tb_num);
 
+int cpu_ldsb_code(CPUX86State *env, target_ulong ptr);
+uint32_t cpu_ldub_code(CPUX86State *env, target_ulong ptr);
+uint32_t cpu_lduw_code(CPUX86State *env, target_ulong ptr);
+int cpu_ldsw_code(CPUX86State *env, target_ulong ptr);
+uint32_t cpu_ldl_code(CPUX86State *env, target_ulong ptr);
+uint64_t cpu_ldq_code(CPUX86State *env, target_ulong ptr);
+
 /* i386 arith/logic operations */
 enum {
     OP_ADDL,
@@ -5303,9 +5310,8 @@ reswitch:
         case 0xb8 ... 0xbf: /* mov R, Iv */
 #ifdef TARGET_X86_64
             if (dflag == 2) {
-                uint64_t tmp;
                 /* 64 bit case */
-                tmp = cpu_ldq_code(s->env, s->pc);
+                target_ulong tmp = cpu_ldq_code(s->env, s->pc);
                 s->pc += 8;
                 reg = (b & 7) | REX_B(s);
                 gen_movtl_T0_im(tmp);

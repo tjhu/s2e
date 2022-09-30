@@ -86,6 +86,9 @@ typedef struct CPUX86State {
     float_status fp_status;
     floatx80 ft0;
 
+    uint16_t padding_1;
+    uint16_t padding_2;
+    
     float_status mmx_status; /* for 3DNow! float ops */
     float_status sse_status;
     uint32_t mxcsr;

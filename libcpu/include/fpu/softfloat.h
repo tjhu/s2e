@@ -156,7 +156,10 @@ typedef uint64_t float64;
 typedef struct {
     uint64_t low;
     uint16_t high;
-} floatx80;
+    uint16_t padding_1;
+    uint16_t padding_2;
+    uint16_t padding_3;
+} __attribute__((aligned(8))) floatx80;
 #define make_floatx80(exp, mant) ((floatx80){mant, exp})
 #define make_floatx80_init(exp, mant) \
     { .low = mant, .high = exp }
