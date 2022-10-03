@@ -179,7 +179,7 @@ list:
 
 ALWAYS:
 
-$(KLEE_DIRS) $(LLVM_DIRS) libq-debug libq-release                   \
+$(KLEE_DIRS) libq-debug libq-release                                \
 libfsigc++-debug libfsigc++-release libvmi-debug libvmi-release     \
 libcoroutine-release libcoroutine-debug libs2e-debug libs2e-release \
 tools-debug tools-release                                           \
