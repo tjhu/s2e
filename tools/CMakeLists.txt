@@ -47,19 +47,6 @@ pkg_check_modules(GLIB2 glib-2.0)
 # # Old CMake does not support static libraries, so we have to patch the library manually
 # string(REPLACE .so .a PROTOBUF_LIBRARIES "${PROTOBUF_LIBRARIES}")
 
-ExternalProject_Add(nlohmann_json-github
-        PREFIX deps
-        GIT_REPOSITORY https://github.com/nlohmann/json.git
-        GIT_TAG v3.10.5
-        CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR> "-DCMAKE_CXX_FLAGS=-fno-rtti -fno-exceptions" -DJSON_BuildTests=OFF)
-ExternalProject_Get_Property(nlohmann_json-github INSTALL_DIR)
-file(MAKE_DIRECTORY ${INSTALL_DIR}/include)
-add_library(nlohmann_json IMPORTED INTERFACE)
-set_target_properties(nlohmann_json PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES ${INSTALL_DIR}/include
-)
-add_dependencies(nlohmann_json nlohmann_json-github)
-
 find_package(LLVM REQUIRED)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 

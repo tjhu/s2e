@@ -362,8 +362,8 @@ typedef struct TCGPool {
 
 #define TCG_POOL_CHUNK_SIZE 32768
 
-#define TCG_MAX_TEMPS 512
-#define TCG_MAX_INSNS 512
+#define TCG_MAX_TEMPS 1024
+#define TCG_MAX_INSNS 1024
 
 /* when the size of the arguments of a called function is smaller than
    this value, they are statically allocated in the TB stack frame */
@@ -988,7 +988,16 @@ static inline bool tcg_op_buf_full(void) {
      * 16-bit unsigned offsets, TranslationBlock.jmp_reset_offset[]
      * and TCGContext.gen_insn_end_off[].
      */
+
+#ifdef STATIC_TRANSLATOR
+    /* Changing size for static translator
+     * Needed for hashing functions (seen in nginx ngx_md5_body && ngx_sha1_body) which 
+     * create large __linear__ basic blocks
+     */
+    return tcg_ctx->nb_ops >= 12000;
+#else
     return tcg_ctx->nb_ops >= 4000;
+#endif
 }
 
 /* pool based memory allocation */

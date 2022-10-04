@@ -260,6 +260,9 @@ if __name__ == "__main__":
 
     ctx = CFGCtx(rz)
 
+    # Increase analysis depth to discover more BBs
+    ctx.pipeExecute('e anal.depth=256')
+
     # Analyze all
     ctx.pipeExecute('aaa')
 
