@@ -692,13 +692,6 @@ void tlb_set_page(CPUArchState *env, target_ulong vaddr, target_phys_addr_t padd
                   target_ulong size) {
 }
 
-int cpu_x86_register(cpuid_t *cpuid, const char *cpu_model, int is64) {
-}
-
-void cpu_x86_cpuid(cpuid_t *cpuid, uint32_t index, uint32_t count, uint32_t *eax, uint32_t *ebx, uint32_t *ecx,
-                   uint32_t *edx) {
-}
-
 void s2e_on_privilege_change(unsigned previous, unsigned current) {
 }
 }

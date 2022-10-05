@@ -5,7 +5,7 @@ import pdb
 import magic
 import sys
 
-noreturn_custom = ["sym.imp.__assert_fail"]
+noreturn_custom = ["sym.imp.__assert_fail", "sym.imp.abort", "sym.imp.pthread_exit"]
 
 parser = argparse.ArgumentParser(description='Collect CFG information from file')
 parser.add_argument('-f', '--infile', required=True)

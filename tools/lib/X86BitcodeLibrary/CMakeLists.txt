@@ -46,6 +46,7 @@ set(INC_DIRS ${INC_DIRS}
 
 link_llvm_bitcode(X86BitcodeLibrary.bc "${FLAGS}" "${INC_DIRS}"
                                         ${LIBCPU_SRC_DIR}/src/target-${LIBCPU_TARGET}/op_helper.c
+                                        ${LIBCPU_SRC_DIR}/src/target-${LIBCPU_TARGET}/cpuid.c
                                         ${LIBCPU_SRC_DIR}/src/fpu/softfloat.c
                                         ${CMAKE_CURRENT_SOURCE_DIR}/BitcodeLibrary.cpp)
 

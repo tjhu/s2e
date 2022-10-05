@@ -27,6 +27,7 @@ add_definitions(-D__STDC_FORMAT_MACROS -D_GNU_SOURCE -DNEED_CPU_H -O0 -g
 add_library(X8664Translator STATIC ${LIBCPU_SRC_DIR}/src/target-${LIBCPU_TARGET}/translate.c
                                    ${LIBCPU_SRC_DIR}/src/target-${LIBCPU_TARGET}/helper.c
                                    ${LIBCPU_SRC_DIR}/src/target-${LIBCPU_TARGET}/op_helper.c
+                                   ${LIBCPU_SRC_DIR}/src/target-${LIBCPU_TARGET}/cpuid.c
                                    ${LIBCPU_SRC_DIR}/src/fpu/softfloat.c
                                    ${LIBTCG_SRC_DIR}/src/tcg.c
                                    ${LIBTCG_SRC_DIR}/src/tcg-op.c
