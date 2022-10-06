@@ -153,6 +153,11 @@ class CFGCtx:
                 else:
                     bb_info['call_succs'].append(self.createSucc(fail_addr))
 
+            # Successor blocks to indirect calls
+            if 'jump' in self.bb:
+                jmp_addr = self.bb['jump']
+                bb_info['succs'].append(self.createSucc(jmp_addr))
+
         # Mark indirect calls in JSON so that it becomes easier for incremental lifting
         if 'jump' not in ins and 'fail' not in ins:
             bb_info['is_indirect'] = 1
