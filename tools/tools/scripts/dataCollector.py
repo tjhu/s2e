@@ -5,7 +5,9 @@ import pdb
 import magic
 import sys
 
-noreturn_custom = ["sym.imp.__assert_fail", "sym.imp.abort", "sym.imp.pthread_exit"]
+noreturn_custom = ["sym.imp.__assert_fail", "sym.imp.abort", "sym.imp.pthread_exit", "sym.imp.exit", "sym.imp.std::__throw_bad_cast__",
+        "sym.imp.std::__throw_logic_error_char_const_", "sym.imp.std::__throw_length_error_char_const_",
+        "sym.imp.std::__throw_out_of_range_fmt_char_const__..._" , "sym.imp.__cxa_throw_bad_array_new_length"]
 
 parser = argparse.ArgumentParser(description='Collect CFG information from file')
 parser.add_argument('-f', '--infile', required=True)
@@ -34,11 +36,11 @@ class CFGCtx:
         return self._handle.cmdj(cmd)
 
     def handleNonReturningFunctions(self):
-        ctx.noreturn = []
+        self.noreturn = []
         noreturn_out = self.pipeExecuteJ('aflj')
         for func in noreturn_out:
             if func["noreturn"] or func["name"] in noreturn_custom:
-                ctx.noreturn += [func["offset"]]
+                self.noreturn += [func["offset"]]
 
     def parseNewFunction(self, func):
         self.func = func
@@ -57,6 +59,7 @@ class CFGCtx:
     def parseNewBB(self, bb):
         self.bb = bb
         self.bb_addr = bb['addr']
+        self.ends_in_no_return = False
 
         self.insns = self.pipeExecuteJ('pdbj @ {}'.format(bb['addr']))
         self.prev_ins = None
@@ -132,7 +135,11 @@ class CFGCtx:
         bb_info['end'] = ins['offset']
 
         if idx + 1 < len(self.insns):
-            bb_info['succs'].append(self.createSucc(self.insns[idx+1]['offset']))
+            if 'jump' in ins and ins['jump'] in self.noreturn:
+                self.ends_in_no_return = True
+            else:
+                bb_info['succs'].append(self.createSucc(self.insns[idx+1]['offset']))
+
             if 'jump' in ins:
                 bb_info['call_succs'].append(self.createSucc(ins['jump']))
             if 'fail' in ins and ins['jump'] not in self.noreturn:
@@ -155,8 +162,13 @@ class CFGCtx:
 
             # Successor blocks to indirect calls
             if 'jump' in self.bb:
-                jmp_addr = self.bb['jump']
-                bb_info['succs'].append(self.createSucc(jmp_addr))
+                if 'jump' in ins:
+                    if ins['jump'] not in self.noreturn:
+                        jmp_addr = self.bb['jump']
+                        bb_info['succs'].append(self.createSucc(jmp_addr))
+                else:
+                    jmp_addr = self.bb['jump']
+                    bb_info['succs'].append(self.createSucc(jmp_addr))
 
         # Mark indirect calls in JSON so that it becomes easier for incremental lifting
         if 'jump' not in ins and 'fail' not in ins:
@@ -286,6 +298,10 @@ if __name__ == "__main__":
                 ins = ctx.insns[idx]
                 if 'type' in ins and ins['type'] == 'invalid':
                     continue
+
+                if ctx.ends_in_no_return:
+                    ctx.ends_in_no_return = False
+                    break
 
                 if is_new_bb:
                     bb_info = ctx.createOutputBB(int(ins['offset']))
