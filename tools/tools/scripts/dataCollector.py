@@ -105,15 +105,18 @@ class CFGCtx:
         ins = self.insns[idx]
         rep_addr = ins['offset']
 
-        # Previous BB ends here
-        bb_info['end'] = self.prev_ins['offset']
-        # Add ins as successor to previous
-        bb_info['succs'].append(self.createSucc(rep_addr))
+        # Previous BB ends at its last instruction if it exists
+        if self.prev_ins != None:
+            bb_info['end'] = self.prev_ins['offset']
 
-        self._output[self.fn_addr]['bbs'].append(bb_info)
+            # Add ins as successor to previous
+            bb_info['succs'].append(self.createSucc(rep_addr))
 
-        # New BB starts and ends here
-        bb_info = self.createOutputBB(rep_addr)
+            self._output[self.fn_addr]['bbs'].append(bb_info)
+
+            # New BB starts and ends here
+            bb_info = self.createOutputBB(rep_addr)
+
         bb_info['end'] = rep_addr
         bb_info['size'] = ins['size']
 
@@ -278,7 +281,7 @@ if __name__ == "__main__":
     ctx = CFGCtx(rz)
 
     # Increase analysis depth to discover more BBs
-    ctx.pipeExecute('e anal.depth=256')
+    ctx.pipeExecute('e anal.depth=512')
     # Disable noreturn analysis propagation
     ctx.pipeExecute('e anal.noret=false')
 
