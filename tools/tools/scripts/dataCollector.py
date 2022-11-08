@@ -279,6 +279,8 @@ if __name__ == "__main__":
 
     # Increase analysis depth to discover more BBs
     ctx.pipeExecute('e anal.depth=256')
+    # Disable noreturn analysis propagation
+    ctx.pipeExecute('e anal.noret=false')
 
     # Analyze all
     ctx.pipeExecute('aaa')
