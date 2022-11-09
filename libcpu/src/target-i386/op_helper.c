@@ -237,8 +237,10 @@ extern const uint8_t rclb_table[32];
 #define floatx80_l2t make_floatx80(0x4000, 0xd49a784bcd1b8afeLL)
 
 /* broken thread support */
-#ifdef STATIC_TRANSLATOR
+#if !defined(SYMBEX_LLVM_LIB) || defined(STATIC_TRANSLATOR)
+#ifndef SYMBEX_LLVM_LIB
 static spinlock_t global_cpu_lock = SPIN_LOCK_UNLOCKED;
+#endif
 
 /**
  * XXX: don't use any locking at all, it's broken.
@@ -247,13 +249,17 @@ static spinlock_t global_cpu_lock = SPIN_LOCK_UNLOCKED;
  * We don't need locking on single cpu anyway.
  */
 void helper_lock(void) {
+#ifndef SYMBEX_LLVM_LIB
     spin_lock(&global_cpu_lock);
+#endif
 }
 
 void helper_unlock(void) {
+#ifndef SYMBEX_LLVM_LIB
     spin_unlock(&global_cpu_lock);
+#endif
 }
-#endif /* SYMBEX_LLVM_LIB */
+#endif /* !defined(SYMBEX_LLVM_LIB) || defined(STATIC_TRANSLATOR) */
 
 void helper_write_eflags(target_ulong t0, uint32_t update_mask) {
     load_eflags(t0, update_mask);
