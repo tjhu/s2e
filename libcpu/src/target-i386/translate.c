@@ -2783,9 +2783,11 @@ static void gen_eob(DisasContext *s) {
      * Do it before calling instrumentation events, to avoid deadlocks
      * if one event tries to exit the cpu loop.
      */
-    // if (s->prefix & PREFIX_LOCK) {
-    //     gen_helper_unlock();
-    // }
+#ifndef STATIC_TRANSLATOR
+    if (s->prefix & PREFIX_LOCK) {
+        gen_helper_unlock();
+    }
+#endif
 
 #ifdef CONFIG_SYMBEX
     if (!s->done_instr_end) {
