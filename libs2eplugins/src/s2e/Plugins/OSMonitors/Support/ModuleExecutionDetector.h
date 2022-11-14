@@ -144,19 +144,11 @@ public:
     ///
     sigc::signal<void, S2EExecutionState *, const ModuleDescriptor &> onModuleLoad;
 
-
-    ///
-    /// custom event
-    sigc::signal<void, ExecutionSignal *, S2EExecutionState *, TranslationBlock *,
-            uint64_t /* ending instruction pc */, bool /* static target is valid */,
-            uint64_t /* static target pc */, bool /* exiting from target */> onExternalTbTransition;
-
 private:
     OSMonitor *m_monitor;
     Vmi *m_vmi;
     ModuleMap *m_modules;
     ConfiguredModules m_configuredModules;
-    std::pair<uint64_t, uint64_t> target;
 
     bool m_trackExecution;
 
@@ -195,8 +187,6 @@ public:
     bool getModuleConfig(const std::string &id, ModuleExecutionCfg &cfg) const;
     bool isModuleConfigured(const std::string &moduleId) const;
     bool isModuleNameConfigured(const std::string &moduleName) const;
-    std::pair<uint64_t, uint64_t> recordAddrRanges(S2EExecutionState *state, const ModuleDescriptor& module);
-    bool belongsToTarget(uint64_t pc);
 };
 
 } // namespace plugins
