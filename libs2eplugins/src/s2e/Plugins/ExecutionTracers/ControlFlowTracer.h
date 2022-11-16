@@ -2,66 +2,96 @@
 #define S2E_PLUGINS_CONTROLFLOWTRACER_H
 
 #include <llvm/ADT/DenseMap.h>
-#include <nlohmann/json.hpp>
 #include <s2e/Plugin.h>
+#include <s2e/Plugins/OSMonitors/OSMonitor.h>
 #include <s2e/Plugins/OSMonitors/Support/ModuleExecutionDetector.h>
+#include <s2e/Plugins/OSMonitors/Support/ProcessExecutionDetector.h>
 
 namespace s2e {
 namespace plugins {
 
-struct TB {
-    uint64_t start;
-    uint32_t size;
-    uint64_t end;
-    llvm::DenseMap<uint64_t, uint32_t> succs;
-    llvm::DenseMap<uint64_t, uint32_t> call_succs;
-    llvm::DenseMap<uint64_t, uint32_t> other_succs;
-    uint32_t block_type;
-    uint32_t is_ret;
+using Address = uint64_t;
+
+struct MappedSegment {
+    std::string moduleName;
+    Address loadAddress;
+    uint64_t size;
 };
 
-class ControlFlowTracer : public Plugin {
+enum class CFType {
+    /// Direct jumps, indirect jumps, tail calls, rep prefix and fallthroughs.
+    Jump,
+    /// Direct and indirect calls.
+    Call,
+    /// Returning with a return instruction.
+    Return,
+    /// Everything that we can't easily model: interrupts, iret, exceptions, and sysenter.
+    Special
+};
+
+struct TracedBlock {
+    TracedBlock() = default;
+    TracedBlock(Address address, uint64_t size, CFType cfType);
+
+    /// The virtual address of the block in this trace. This could be different across multiple traces if the target
+    /// binary is position independent and ASLR is enabled.
+    Address address;
+    /// This size of the block, in bytes.
+    uint64_t size;
+    /// How this block is terminated.
+    CFType cfType;
+    /// All observed successors of this block. If it ends on a direct jump or call, this should have a size of 1.
+    std::vector<uint64_t> successors;
+};
+
+struct TraceInfo {
+    static constexpr const char *filename = "traceInfo.json";
+
+    std::vector<MappedSegment> segments;
+    std::vector<Address> entries;
+    std::vector<TracedBlock> blocks;
+};
+
+class TraceInfoGen {
+public:
+    auto getTraceInfo() const -> const TraceInfo &;
+    void registerBlock(Address address, uint64_t size, CFType cfType);
+    void recordTransfer(Address from, Address to);
+    void recordEntry(Address addr);
+    void registerSegment(std::string name, Address loadAddress, uint64_t size);
+
+private:
+    struct IndexedBlock {
+        size_t block_index;
+        llvm::DenseSet<Address> succs;
+    };
+
+    TraceInfo m_traceInfo;
+    llvm::DenseMap<Address, IndexedBlock> m_blockIndex;
+    llvm::DenseSet<Address> m_entryIndex;
+};
+
+class ControlFlowTracer final : public Plugin {
     S2E_PLUGIN
 
 public:
-    ControlFlowTracer(S2E *s2e) : Plugin(s2e) {
-    }
-
+    ControlFlowTracer(S2E *s2e);
     void initialize();
 
 private:
-    std::string m_fileName;
-    FILE *m_traceFile;
-    ModuleExecutionDetector *m_detector;
-    OSMonitor *m_monitor;
-    target_ulong m_prevTB;
-
-    llvm::DenseMap<target_ulong, TB *> m_tbs;
-    std::unordered_map<std::string, std::vector<std::pair<uint64_t, uint64_t>>> m_modules;
-
     void onModuleTranslateBlockStart(ExecutionSignal *signal, S2EExecutionState *state, const ModuleDescriptor &module,
                                      TranslationBlock *tb, uint64_t pc);
-
-    void onModuleBlockExecutionStart(S2EExecutionState *state, uint64_t pc);
-
     void onModuleTranslateBlockComplete(S2EExecutionState *state, const ModuleDescriptor &module, TranslationBlock *tb,
-                                        uint64_t lastPc);
-
+                                        uint64_t last_pc);
+    void onModuleBlockExecutionStart(S2EExecutionState *state, uint64_t pc);
     void onModuleTransition(S2EExecutionState *state, ModuleDescriptorConstPtr prev, ModuleDescriptorConstPtr next);
-
     void onModuleLoad(S2EExecutionState *state, const ModuleDescriptor &module);
-
     void onEngineShutdown();
 
-    // writer methods
-    void generateTraceInfoJsonFile(); // generates traceInfo.json
-    void writeTraceInfoJson();
-
-    void writeTBs(nlohmann::json &tbJson);
-
-    void writeModules(nlohmann::json &moduleJson);
-
-    nlohmann::json writeSuccessors(llvm::DenseMap<uint64_t, uint32_t> map);
+    OSMonitor *m_monitor = nullptr;
+    ModuleExecutionDetector *m_detector = nullptr;
+    ProcessExecutionDetector *m_pDetector = nullptr;
+    TraceInfoGen m_gen;
 };
 
 } // namespace plugins

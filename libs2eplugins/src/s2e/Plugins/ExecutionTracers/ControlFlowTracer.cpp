@@ -1,172 +1,197 @@
 #include "ControlFlowTracer.h"
+
+#include <fstream>
+#include <nlohmann/json.hpp>
+
 #include <cpu/tb.h>
 #include <s2e/Plugins/OSMonitors/OSMonitor.h>
 #include <s2e/S2E.h>
 
-using json = nlohmann::json;
-
 namespace s2e {
 namespace plugins {
 
-S2E_DEFINE_PLUGIN(ControlFlowTracer, "Tracer for control flow of translation blocks", "ModuleExecutionDetector",
-                  "OSMonitor");
+S2E_DEFINE_PLUGIN(ControlFlowTracer, "Tracer for control flow of translation blocks", "", "ModuleExecutionDetector",
+                  "OSMonitor", "ProcessExecutionDetector");
+
+namespace {
+class CFTState final : public PluginState {
+public:
+    auto getLastBlockAddress() const -> Address {
+        return m_lastBlockAddress;
+    }
+
+    void setLastBlockAddress(Address value) {
+        m_lastBlockAddress = value;
+    }
+
+    auto isExternal() const -> bool {
+        return m_lastBlockAddress == 0;
+    }
+
+    void leaveModule() {
+        m_lastBlockAddress = 0;
+    }
+
+    auto clone() const -> CFTState * override {
+        return new CFTState{*this};
+    }
+
+    static auto factory(Plugin *p, S2EExecutionState *s) -> PluginState * {
+        return new CFTState;
+    }
+
+private:
+    Address m_lastBlockAddress = 0;
+};
+
+auto toCFType(ETranslationBlockType tbType) -> CFType {
+    switch (tbType) {
+        case TB_DEFAULT:
+        case TB_JMP:
+        case TB_JMP_IND:
+        case TB_COND_JMP:
+        case TB_COND_JMP_IND:
+        case TB_REP:
+            return CFType::Jump;
+        case TB_CALL:
+        case TB_CALL_IND:
+            return CFType::Call;
+        case TB_RET:
+            return CFType::Return;
+            break;
+        case TB_IRET:
+        case TB_EXCP:
+        case TB_SYSENTER:
+        case TB_INTERRUPT:
+            return CFType::Special;
+            break;
+        default:
+            assert(false && "Unhandled ETranslationBlockType");
+            break;
+    }
+}
+} // namespace
+
+TracedBlock::TracedBlock(Address address, uint64_t size, CFType cfType) : address{address}, size{size}, cfType{cfType} {
+}
+
+void to_json(nlohmann::json &j, const MappedSegment &ms) {
+    j = {
+        {"moduleName", ms.moduleName},
+        {"loadAddress", ms.loadAddress},
+        {"size", ms.size},
+    };
+}
+
+void to_json(nlohmann::json &j, const TracedBlock &tb) {
+    j = {
+        {"address", tb.address},
+        {"size", tb.size},
+        {"cfType", tb.cfType},
+        {"successors", tb.successors},
+    };
+}
+
+void to_json(nlohmann::json &j, const TraceInfo &ti) {
+    j = {
+        {"segments", ti.segments},
+        {"entries", ti.entries},
+        {"blocks", ti.blocks},
+    };
+}
+
+auto TraceInfoGen::getTraceInfo() const -> const TraceInfo & {
+    return m_traceInfo;
+}
+
+void TraceInfoGen::registerBlock(Address address, uint64_t size, CFType cfType) {
+    assert(address != 0 && "Cannot register block at address 0");
+    assert(size > 0 && "Block cannot be of size 0");
+    assert(m_blockIndex.count(address) == 0 && "Block translated twice");
+    m_traceInfo.blocks.emplace_back(address, size, cfType);
+    m_blockIndex.insert({address, IndexedBlock{m_traceInfo.blocks.size() - 1}});
+}
+
+void TraceInfoGen::recordTransfer(Address from, Address to) {
+    const auto fromIt = m_blockIndex.find(from);
+    assert(fromIt != m_blockIndex.end() && "from-block not found");
+    assert(m_blockIndex.count(to) == 0 && "to-block not found");
+    auto &succs = fromIt->second.succs;
+    const auto succsIt = succs.find(to);
+    if (succsIt == succs.end()) {
+        succs.insert(to);
+        m_traceInfo.blocks[fromIt->second.block_index].successors.push_back(to);
+    }
+}
+
+void TraceInfoGen::recordEntry(Address addr) {
+    assert(address != 0 && "Address 0 cannot be an entry");
+    if (!m_entryIndex.contains(addr)) {
+        m_entryIndex.insert(addr);
+        m_traceInfo.entries.push_back(addr);
+    }
+}
+
+void TraceInfoGen::registerSegment(std::string name, Address loadAddress, uint64_t size) {
+    m_traceInfo.segments.push_back({std::move(name), loadAddress, size});
+}
+
+ControlFlowTracer::ControlFlowTracer(S2E *s2e) : Plugin(s2e) {
+}
 
 void ControlFlowTracer::initialize() {
-    // initialize member variables
-    m_fileName = "traceInfo.json";
-    m_detector = s2e()->getPlugin<ModuleExecutionDetector>();
     m_monitor = static_cast<OSMonitor *>(s2e()->getPlugin("OSMonitor"));
-    m_prevTB = 0;
-
-    // initialize traceInfo.json
-    generateTraceInfoJsonFile();
-
-    // register to execute whenever a tb of target module is executed
-    m_detector->onModuleTranslateBlockStart.connect(
-        sigc::mem_fun(*this, &ControlFlowTracer::onModuleTranslateBlockStart));
-
-    // register to record ending address of tb
-    m_detector->onModuleTranslateBlockComplete.connect(
-        sigc::mem_fun(*this, &ControlFlowTracer::onModuleTranslateBlockComplete));
-
-    // register on module transitions involving the target module
-    m_detector->onModuleTransition.connect(sigc::mem_fun(*this, &ControlFlowTracer::onModuleTransition));
-
-    // register to record module info
     m_monitor->onModuleLoad.connect(sigc::mem_fun(*this, &ControlFlowTracer::onModuleLoad));
 
-    // clean up on s2e shutdown
+    m_pDetector = s2e()->getPlugin<ProcessExecutionDetector>();
+
+    m_detector = s2e()->getPlugin<ModuleExecutionDetector>();
+    m_detector->onModuleTranslateBlockStart.connect(
+        sigc::mem_fun(*this, &ControlFlowTracer::onModuleTranslateBlockStart));
+    m_detector->onModuleTranslateBlockComplete.connect(
+        sigc::mem_fun(*this, &ControlFlowTracer::onModuleTranslateBlockComplete));
+    m_detector->onModuleTransition.connect(sigc::mem_fun(*this, &ControlFlowTracer::onModuleTransition));
+
     s2e()->getCorePlugin()->onEngineShutdown.connect(sigc::mem_fun(*this, &ControlFlowTracer::onEngineShutdown));
 }
 
-void ControlFlowTracer::generateTraceInfoJsonFile() {
-    m_fileName = s2e()->getOutputFilename(m_fileName);
-    m_traceFile = fopen(m_fileName.c_str(), "a");
-}
-
 void ControlFlowTracer::onEngineShutdown() {
-    writeTraceInfoJson();
-    fclose(m_traceFile);
+    nlohmann::json json = m_gen.getTraceInfo();
+    std::ofstream out{s2e()->getOutputFilename(TraceInfo::filename)};
+    out << json.dump();
 }
 
 void ControlFlowTracer::onModuleTranslateBlockStart(ExecutionSignal *signal, S2EExecutionState *state,
                                                     const ModuleDescriptor &module, TranslationBlock *tb, uint64_t pc) {
     signal->connect(sigc::mem_fun(*this, &ControlFlowTracer::onModuleBlockExecutionStart));
-    // construct new TB entry
-    TB *newTB = new TB;
-    newTB->start = pc;
-    m_tbs.insert({pc, newTB});
 }
 
 void ControlFlowTracer::onModuleBlockExecutionStart(S2EExecutionState *state, uint64_t pc) {
-    if (m_prevTB != 0) {
-        auto prev_type = static_cast<ETranslationBlockType>(m_tbs[m_prevTB]->block_type);
-        auto curr_type = static_cast<ETranslationBlockType>(m_tbs[pc]->block_type);
-        switch (prev_type) {
-            case TB_JMP:
-            case TB_JMP_IND:
-            case TB_COND_JMP:
-            case TB_COND_JMP_IND:
-                m_tbs[m_prevTB]->succs.insert({pc, prev_type});
-                break;
-            case TB_CALL:
-            case TB_CALL_IND:
-                m_tbs[m_prevTB]->call_succs.insert({pc, prev_type});
-                break;
-            case TB_DEFAULT:
-            case TB_RET:
-            case TB_IRET:
-                m_tbs[m_prevTB]->succs.insert({pc, curr_type});
-                break;
-            case TB_REP:
-            case TB_EXCP:
-            case TB_SYSENTER:
-            case TB_INTERRUPT:
-                m_tbs[m_prevTB]->other_succs.insert({pc, curr_type});
-                break;
-            default:
-                getInfoStream(state) << "Unhandled TB predecessor " << prev_type << "\n";
-                abort();
-                break;
-        }
+    DECLARE_PLUGINSTATE(CFTState, state);
+    if (plgState->isExternal()) {
+        m_gen.recordEntry(pc);
+    } else {
+        m_gen.recordTransfer(plgState->getLastBlockAddress(), pc);
     }
-    m_prevTB = pc;
+    plgState->setLastBlockAddress(pc);
 }
 
 void ControlFlowTracer::onModuleTranslateBlockComplete(S2EExecutionState *state, const ModuleDescriptor &module,
-                                                       TranslationBlock *tb, uint64_t lastPc) {
-    // set attribute of current block
-    TB *current = m_tbs.lookup(tb->pc);
-    current->size = tb->size;
-    current->end = lastPc;
-    current->block_type = tb->se_tb_type;
-    current->is_ret = (current->block_type == TB_RET || current->block_type == TB_IRET) ? current->block_type : 0;
+                                                       TranslationBlock *tb, uint64_t last_pc) {
+    m_gen.registerBlock(tb->pc, tb->size, toCFType(tb->se_tb_type));
 }
 
 void ControlFlowTracer::onModuleTransition(S2EExecutionState *state, ModuleDescriptorConstPtr prev,
                                            ModuleDescriptorConstPtr next) {
-    if (prev != nullptr) { // exiting target module
-        m_prevTB = 0;
-    }
+    DECLARE_PLUGINSTATE(CFTState, state);
+    plgState->leaveModule();
 }
 
 void ControlFlowTracer::onModuleLoad(S2EExecutionState *state, const ModuleDescriptor &module) {
-    for (const auto &section : module.Sections) {
-        m_modules[module.Name.c_str()].push_back(std::pair<uint64_t, uint64_t>{section.runtimeLoadBase, section.size});
-    }
-    // create map of address ranges that are mapped to module names
-}
-
-void ControlFlowTracer::writeTraceInfoJson() {
-    json tbJson;
-    json moduleJson;
-    writeTBs(tbJson);
-    writeModules(moduleJson);
-
-    // write to file
-    json finalJson = json{{"TBs", tbJson}, {"modules", moduleJson}};
-    const auto jsonStr = finalJson.dump(2);
-    fprintf(m_traceFile, "%s\n", jsonStr.c_str());
-}
-
-void ControlFlowTracer::writeTBs(nlohmann::json &tbJson) {
-    for (auto const &pair : m_tbs) {
-        const TB *tb = pair.second;
-        // normal successor json
-        json succs = writeSuccessors(tb->succs);
-        json call_succs = writeSuccessors(tb->call_succs);
-        json other_succs = writeSuccessors(tb->other_succs);
-
-        json add = json{{"start", tb->start},
-                        {"size", tb->size},
-                        {"end", tb->end},
-                        {"succs", succs},
-                        {"call_succs", call_succs},
-                        {"other_succs", other_succs},
-                        {"block_type", tb->block_type},
-                        {"is_ret", tb->is_ret}};
-        tbJson.push_back(add);
-    }
-}
-
-json ControlFlowTracer::writeSuccessors(llvm::DenseMap<uint64_t, uint32_t> map) {
-    if (map.empty()) {
-        return json::array();
-    }
-    json res;
-    for (auto const &succ : map) {
-        res.push_back(json{{"addr", succ.first}, {"type", succ.second}});
-    }
-    return res;
-}
-
-void ControlFlowTracer::writeModules(nlohmann::json &moduleJson) {
-    for (auto const &module : m_modules) {
-        json sections;
-        for (auto const &section : module.second) {
-            sections.push_back(json{{"lb", section.first}, {"size", section.second}});
+    if (m_pDetector->isTracked(state, module.Pid)) {
+        for (auto &section : module.Sections) {
+            m_gen.registerSegment(module.Name, section.runtimeLoadBase, section.size);
         }
-        moduleJson.push_back(json{{"name", module.first}, {"sections", sections}});
     }
 }
 
