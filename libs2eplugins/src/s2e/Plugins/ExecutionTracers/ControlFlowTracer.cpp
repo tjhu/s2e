@@ -72,43 +72,35 @@ auto toCFType(ETranslationBlockType tbType) -> CFType {
 }
 } // namespace
 
-TracedBlock::TracedBlock(Address address, uint64_t size, CFType cfType) : address{address}, size{size}, cfType{cfType} {
+TracedBlock::TracedBlock(Address address, Address lastPc, uint64_t size, CFType cfType)
+    : address{address}, lastPc{lastPc}, size{size}, cfType{cfType} {
 }
 
 void to_json(nlohmann::json &j, const MappedSegment &ms) {
-    j = {
-        {"moduleName", ms.moduleName},
-        {"loadAddress", ms.loadAddress},
-        {"size", ms.size},
-    };
+    j = {{"moduleName", ms.moduleName}, {"loadAddress", ms.loadAddress}, {"size", ms.size}};
 }
 
 void to_json(nlohmann::json &j, const TracedBlock &tb) {
-    j = {
-        {"address", tb.address},
-        {"size", tb.size},
-        {"cfType", tb.cfType},
-        {"successors", tb.successors},
-    };
+    j = {{"address", tb.address},
+         {"size", tb.size},
+         {"lastPc", tb.lastPc},
+         {"cfType", tb.cfType},
+         {"successors", tb.successors}};
 }
 
 void to_json(nlohmann::json &j, const TraceInfo &ti) {
-    j = {
-        {"segments", ti.segments},
-        {"entries", ti.entries},
-        {"blocks", ti.blocks},
-    };
+    j = {{"segments", ti.segments}, {"entries", ti.entries}, {"blocks", ti.blocks}};
 }
 
 auto TraceInfoGen::getTraceInfo() const -> const TraceInfo & {
     return m_traceInfo;
 }
 
-void TraceInfoGen::registerBlock(Address address, uint64_t size, CFType cfType) {
+void TraceInfoGen::registerBlock(Address address, Address lastPc, uint64_t size, CFType cfType) {
     assert(address != 0 && "Cannot register block at address 0");
     assert(size > 0 && "Block cannot be of size 0");
     assert(m_blockIndex.count(address) == 0 && "Block translated twice");
-    m_traceInfo.blocks.emplace_back(address, size, cfType);
+    m_traceInfo.blocks.emplace_back(address, lastPc, size, cfType);
     m_blockIndex.insert({address, IndexedBlock{m_traceInfo.blocks.size() - 1}});
 }
 
@@ -168,17 +160,16 @@ void ControlFlowTracer::onModuleTranslateBlockStart(ExecutionSignal *signal, S2E
 
 void ControlFlowTracer::onModuleBlockExecutionStart(S2EExecutionState *state, uint64_t pc) {
     DECLARE_PLUGINSTATE(CFTState, state);
-    if (plgState->isExternal()) {
+    if (plgState->isExternal())
         m_gen.recordEntry(pc);
-    } else {
+    else
         m_gen.recordTransfer(plgState->getLastBlockAddress(), pc);
-    }
     plgState->setLastBlockAddress(pc);
 }
 
 void ControlFlowTracer::onModuleTranslateBlockComplete(S2EExecutionState *state, const ModuleDescriptor &module,
-                                                       TranslationBlock *tb, uint64_t last_pc) {
-    m_gen.registerBlock(tb->pc, tb->size, toCFType(tb->se_tb_type));
+                                                       TranslationBlock *tb, uint64_t lastPc) {
+    m_gen.registerBlock(tb->pc, lastPc, tb->size, toCFType(tb->se_tb_type));
 }
 
 void ControlFlowTracer::onModuleTransition(S2EExecutionState *state, ModuleDescriptorConstPtr prev,
@@ -189,9 +180,8 @@ void ControlFlowTracer::onModuleTransition(S2EExecutionState *state, ModuleDescr
 
 void ControlFlowTracer::onModuleLoad(S2EExecutionState *state, const ModuleDescriptor &module) {
     if (m_pDetector->isTracked(state, module.Pid)) {
-        for (auto &section : module.Sections) {
+        for (auto &section : module.Sections)
             m_gen.registerSegment(module.Name, section.runtimeLoadBase, section.size);
-        }
     }
 }
 

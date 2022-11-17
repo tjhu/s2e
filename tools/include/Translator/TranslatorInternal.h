@@ -338,6 +338,11 @@ void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, co
     nlohmann::json j;
     i >> j;
 
+    if (j.contains("type") && j.at("type") == "s2e") {
+        // Dynamic trace. We ignore this for now.
+        return;
+    }
+
     std::unordered_map<uint64_t, std::string> bb_map;
     std::vector<std::pair<uint64_t, std::string>> worklist = {};
     for (const auto &func : j.items()) {

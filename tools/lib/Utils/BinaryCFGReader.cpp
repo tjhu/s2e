@@ -25,6 +25,7 @@
 #include <sstream>
 #include <stdio.h>
 
+#include <llvm/Support/FormatVariadic.h>
 #include <llvm/Support/raw_ostream.h>
 #include <nlohmann/json.hpp>
 
@@ -65,35 +66,51 @@ bool ParseExternalCfgFile(const std::string &file, BinaryBasicBlocks &bbs, Binar
     nlohmann::json j;
     i >> j;
 
-    for (const auto &func : j.items()) {
-        BinaryFunction *bf = new BinaryFunction(func.value()["name"]);
-        functions.insert(bf);
+    if (j.contains("type") && j.at("type") == "s2e") {
+        for (const auto &block : j.at("blocks")) {
+            const uint64_t address = block["address"];
+            const uint64_t lastPc = block["lastPc"];
+            const unsigned size = block["size"];
+            auto *const bf = new BinaryFunction(formatv("Func_{0:X-}", address));
+            functions.insert(bf);
+            auto *const bb = new BinaryBasicBlock{address, lastPc, size};
+            bbs.insert(bb);
+            bf->add(bb);
+            bf->setEntryBlock(bb);
+        }
+    } else {
+        for (const auto &func : j.items()) {
+            BinaryFunction *bf = new BinaryFunction(func.value()["name"]);
+            functions.insert(bf);
 
-        for (const auto &bb : func.value()["bbs"]) {
-            // errs() << "Analyzing : " << hexval(bb["start"]) << ":" << hexval(bb["end"]) << ":" << func.key() << "\n";
-            BinaryBasicBlock *binaryBb = new BinaryBasicBlock(bb["start"], bb["end"], bb["size"]);
-            bbs.insert(binaryBb);
+            for (const auto &bb : func.value()["bbs"]) {
+                // errs() << "Analyzing : " << hexval(bb["start"]) << ":" << hexval(bb["end"]) << ":" << func.key()
+                // <<
+                // "\n";
+                BinaryBasicBlock *binaryBb = new BinaryBasicBlock(bb["start"], bb["end"], bb["size"]);
+                bbs.insert(binaryBb);
 
-            if (binaryBb->getStartPc() == stoi(func.key())) {
-                bf->setEntryBlock(binaryBb);
+                if (binaryBb->getStartPc() == stoi(func.key()))
+                    bf->setEntryBlock(binaryBb);
+
+                bf->add(binaryBb);
             }
 
-            bf->add(binaryBb);
-        }
+            for (const auto &bb : func.value()["bbs"]) {
+                BinaryBasicBlock *binaryBb = bbs.find(bb["start"]);
+                assert(binaryBb);
 
-        for (const auto &bb : func.value()["bbs"]) {
-            BinaryBasicBlock *binaryBb = bbs.find(bb["start"]);
-            assert(binaryBb);
+                for (const auto &succ : bb["succs"]) {
+                    BinaryBasicBlock *bb = bbs.find(succ["addr"]);
+                    if (!bb) {
+                        llvm::errs() << "Block " << hexval(stoi(func.key())) << " has incorrect succs "
+                                     << hexval(succ["addr"]) << "\n";
+                        continue;
+                    }
 
-            for (const auto &succ : bb["succs"]) {
-                BinaryBasicBlock *bb = bbs.find(succ["addr"]);
-                if (!bb) {
-                    llvm::errs() << "Block " << hexval(stoi(func.key())) << " has incorrect succs " << hexval(succ["addr"]) << "\n";
-                    continue;
+                    binaryBb->addSucc(bb);
+                    bb->addPred(binaryBb);
                 }
-
-                binaryBb->addSucc(bb);
-                bb->addPred(binaryBb);
             }
         }
     }

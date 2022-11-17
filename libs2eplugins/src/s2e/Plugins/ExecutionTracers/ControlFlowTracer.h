@@ -31,11 +31,13 @@ enum class CFType {
 
 struct TracedBlock {
     TracedBlock() = default;
-    TracedBlock(Address address, uint64_t size, CFType cfType);
+    TracedBlock(Address address, Address lastPc, uint64_t size, CFType cfType);
 
     /// The virtual address of the block in this trace. This could be different across multiple traces if the target
     /// binary is position independent and ASLR is enabled.
     Address address;
+    /// The virtual address of the last (terminating) instruction of this block. This is used by revgen.
+    Address lastPc;
     /// This size of the block, in bytes.
     uint64_t size;
     /// How this block is terminated.
@@ -55,7 +57,7 @@ struct TraceInfo {
 class TraceInfoGen {
 public:
     auto getTraceInfo() const -> const TraceInfo &;
-    void registerBlock(Address address, uint64_t size, CFType cfType);
+    void registerBlock(Address address, Address lastPc, uint64_t size, CFType cfType);
     void recordTransfer(Address from, Address to);
     void recordEntry(Address addr);
     void registerSegment(std::string name, Address loadAddress, uint64_t size);
@@ -82,7 +84,7 @@ private:
     void onModuleTranslateBlockStart(ExecutionSignal *signal, S2EExecutionState *state, const ModuleDescriptor &module,
                                      TranslationBlock *tb, uint64_t pc);
     void onModuleTranslateBlockComplete(S2EExecutionState *state, const ModuleDescriptor &module, TranslationBlock *tb,
-                                        uint64_t last_pc);
+                                        uint64_t lastPc);
     void onModuleBlockExecutionStart(S2EExecutionState *state, uint64_t pc);
     void onModuleTransition(S2EExecutionState *state, ModuleDescriptorConstPtr prev, ModuleDescriptorConstPtr next);
     void onModuleLoad(S2EExecutionState *state, const ModuleDescriptor &module);
