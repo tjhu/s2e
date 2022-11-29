@@ -1,33 +1,43 @@
 import r2pipe
 import argparse
 import json
-import pdb
 import magic
-import sys
 
-noreturn_custom = ["sym.imp.__assert_fail", "sym.imp.abort", "sym.imp.pthread_exit", "sym.imp.exit", "sym.imp.std::__throw_bad_cast__",
-        "sym.imp.std::__throw_logic_error_char_const_", "sym.imp.std::__throw_length_error_char_const_",
-        "sym.imp.std::__throw_out_of_range_fmt_char_const__..._" , "sym.imp.__cxa_throw_bad_array_new_length"]
+noreturn_custom = ['sym.imp.__assert_fail', 'sym.imp.abort', 'sym.imp.pthread_exit', 'sym.imp.exit',
+                   'sym.imp.std::__throw_bad_cast__',
+                   'sym.imp.std::__throw_logic_error_char_const_', 'sym.imp.std::__throw_length_error_char_const_',
+                   'sym.imp.std::__throw_out_of_range_fmt_char_const__..._', 'sym.imp.__cxa_throw_bad_array_new_length']
 
 parser = argparse.ArgumentParser(description='Collect CFG information from file')
 parser.add_argument('-f', '--infile', required=True)
 parser.add_argument('-o', '--outfile', required=True)
 args = parser.parse_args()
 
+
 def cleanFuncName(name):
-    if "dbg." in name:
+    if 'dbg.' in name:
         return name[4:]
-    elif "sym.imp." in name:
+    elif 'sym.imp.' in name:
         return name[8:]
-    elif "sym." in name:
+    elif 'sym.' in name:
         return name[4:]
     else:
         return name
 
+
 class CFGCtx:
     def __init__(self, pipe):
+        self.func = None
+        self.fn_addr = None
+        self.bbs = []
+        self.bb = None
+        self.bb_addr = None
+        self.ends_in_no_return = False
+        self.insns = None
+        self.prev_ins = None
+        self.noreturn = []
         self._handle = pipe
-        self._output = {}
+        self._output = {'functions': {}, 'blocks': {}}
 
     def pipeExecute(self, cmd):
         return self._handle.cmd(cmd)
@@ -39,19 +49,15 @@ class CFGCtx:
         self.noreturn = []
         noreturn_out = self.pipeExecuteJ('aflj')
         for func in noreturn_out:
-            if func["noreturn"] or func["name"] in noreturn_custom:
-                self.noreturn += [func["offset"]]
+            if func['noreturn'] or func['name'] in noreturn_custom:
+                self.noreturn += [func['offset']]
 
     def parseNewFunction(self, func):
         self.func = func
         self.fn_addr = func['offset']
-
         self.bbs = self.pipeExecuteJ('afbj @ {}'.format(self.fn_addr))
-
-        self._output[self.fn_addr]               = {}
-        self._output[self.fn_addr]['bbs']        = []
-        self._output[self.fn_addr]['name']       = cleanFuncName(func['name'])
-        self._output[self.fn_addr]['ret_blocks'] = []
+        self._output['functions'][self.fn_addr] = {'address': self.fn_addr, 'blocks': [],
+                                                   'symbolName': cleanFuncName(func['name'])}
 
     def getOutput(self):
         return self._output
@@ -60,134 +66,119 @@ class CFGCtx:
         self.bb = bb
         self.bb_addr = bb['addr']
         self.ends_in_no_return = False
-
         self.insns = self.pipeExecuteJ('pdbj @ {}'.format(bb['addr']))
         self.prev_ins = None
 
     def createOutputBB(self, addr):
-        bb = {}
-        bb['start'] = addr
-        bb['succs'] = []
-        bb['call_succs'] = []
-        bb['size'] = 0
-        bb['end'] = 0
-        bb['is_ret'] = 0
-        bb['is_indirect'] = 0
-
-        return bb
-
-    def createSucc(self, addr, type_id=0):
-        succ = {}
-        succ['addr'] = addr
-        succ['type'] = 0
-
-        return succ
+        return {'address': addr, 'successors': set(), 'callTargets': set(), 'size': 0, 'lastPc': 0, 'isRet': 0,
+                'isIndirect': False}
 
     def handleTerminatorIns(self, idx, bb_info):
         ins = self.insns[idx]
         rep_addr = ins['offset']
 
-        bb_info['end'] = ins['offset']
+        bb_info['lastPc'] = ins['offset']
         # Fallthrough sucessor
         if idx + 1 < len(self.insns):
-            bb_info['succs'].append(self.createSucc(self.insns[idx+1]['offset']))
+            bb_info['successors'].add(self.insns[idx + 1]['offset'])
         # Add any explicit fail block (most likely same as fallthrough)
         if 'fail' in ins:
-            bb_info['succs'].append(self.createSucc(ins['fail']))
+            bb_info['successors'].add(ins['fail'])
         # Add instruction target if any to call_succ
         if 'jump' in ins:
-            bb_info['call_succs'].append(self.createSucc(ins['jump']))
+            bb_info['callTargets'].add(ins['jump'])
 
-        bb_info['succs'] = list({x['addr']:x for x in bb_info['succs']}.values())
-        self._output[self.fn_addr]['bbs'].append(bb_info)
+        self._output['functions'][self.fn_addr]['blocks'].append(bb_info['address'])
+        self._output['blocks'][bb_info['address']] = bb_info
 
     def handleRepIns(self, idx, bb_info):
         ins = self.insns[idx]
         rep_addr = ins['offset']
 
         # Previous BB ends at its last instruction if it exists
-        if self.prev_ins != None:
-            bb_info['end'] = self.prev_ins['offset']
+        if self.prev_ins is not None:
+            bb_info['lastPc'] = self.prev_ins['offset']
 
             # Add ins as successor to previous
-            bb_info['succs'].append(self.createSucc(rep_addr))
+            bb_info['successors'].add(rep_addr)
 
-            self._output[self.fn_addr]['bbs'].append(bb_info)
+            self._output['functions'][self.fn_addr]['blocks'].append(bb_info['address'])
+            self._output['blocks'][bb_info['address']] = bb_info
 
             # New BB starts and ends here
             bb_info = self.createOutputBB(rep_addr)
 
-        bb_info['end'] = rep_addr
+        bb_info['lastPc'] = rep_addr
         bb_info['size'] = ins['size']
 
         # Fallthrough sucessor
         if idx + 1 < len(self.insns):
-            bb_info['succs'].append(self.createSucc(self.insns[idx+1]['offset']))
+            bb_info['successors'].add(self.insns[idx + 1]['offset'])
         # Add any explicit fail block (most likely same as fallthrough)
         if 'fail' in ins:
-            bb_info['succs'].append(self.createSucc(ins['fail']))
+            bb_info['successors'].add(ins['fail'])
         # Append self
-        bb_info['succs'].append(self.createSucc(rep_addr))
+        bb_info['successors'].add(rep_addr)
         # No call target in rep instruction
 
-        bb_info['succs'] = list({x['addr']:x for x in bb_info['succs']}.values())
-        self._output[self.fn_addr]['bbs'].append(bb_info)
+        self._output['functions'][self.fn_addr]['blocks'].append(bb_info['address'])
+        self._output['blocks'][bb_info['address']] = bb_info
 
     def handleCallIns(self, idx, bb_info):
         ins = self.insns[idx]
-        bb_info['end'] = ins['offset']
+        bb_info['lastPc'] = ins['offset']
 
         if idx + 1 < len(self.insns):
             if 'jump' in ins and ins['jump'] in self.noreturn:
                 self.ends_in_no_return = True
             else:
-                bb_info['succs'].append(self.createSucc(self.insns[idx+1]['offset']))
+                bb_info['successors'].add(self.insns[idx + 1]['offset'])
 
             if 'jump' in ins:
-                bb_info['call_succs'].append(self.createSucc(ins['jump']))
+                bb_info['callTargets'].add(ins['jump'])
             if 'fail' in ins and ins['jump'] not in self.noreturn:
-                bb_info['succs'].append(self.createSucc(ins['fail']))
+                bb_info['successors'].add(ins['fail'])
         elif idx == len(self.insns) - 1:
             if 'jump' in ins:
                 jmp_addr = ins['jump']
                 target_fn = self.pipeExecuteJ('pij 1 @ {}'.format(jmp_addr))[0]['fcn_addr']
                 if target_fn == self.fn_addr:
-                    bb_info['succs'].append(self.createSucc(jmp_addr))
+                    bb_info['successors'].add(jmp_addr)
                 else:
-                    bb_info['call_succs'].append(self.createSucc(jmp_addr))
+                    bb_info['callTargets'].add(jmp_addr)
             if 'fail' in ins and ins['jump'] not in self.noreturn:
                 fail_addr = ins['fail']
                 target_fn = self.pipeExecuteJ('pij 1 @ {}'.format(fail_addr))[0]['fcn_addr']
                 if target_fn == self.fn_addr:
-                    bb_info['succs'].append(self.createSucc(fail_addr))
+                    bb_info['successors'].add(fail_addr)
                 else:
-                    bb_info['call_succs'].append(self.createSucc(fail_addr))
+                    bb_info['callTargets'].add(fail_addr)
 
             # Successor blocks to indirect calls
             if 'jump' in self.bb:
                 if 'jump' in ins:
                     if ins['jump'] not in self.noreturn:
                         jmp_addr = self.bb['jump']
-                        bb_info['succs'].append(self.createSucc(jmp_addr))
+                        bb_info['successors'].add(jmp_addr)
                 else:
                     jmp_addr = self.bb['jump']
-                    bb_info['succs'].append(self.createSucc(jmp_addr))
+                    bb_info['successors'].add(jmp_addr)
 
         # Mark indirect calls in JSON so that it becomes easier for incremental lifting
         if 'jump' not in ins and 'fail' not in ins:
-            bb_info['is_indirect'] = 1
+            bb_info['isIndirect'] = True
 
-        bb_info['succs'] = list({x['addr']:x for x in bb_info['succs']}.values())
-        self._output[self.fn_addr]['bbs'].append(bb_info)
+        self._output['functions'][self.fn_addr]['blocks'].append(bb_info['address'])
+        self._output['blocks'][bb_info['address']] = bb_info
 
     def handleOtherIns(self, idx, bb_info):
         if idx != len(self.insns) - 1:
             return
-        
+
         ins = self.insns[idx]
-        bb_info['end'] = ins['offset']
+        bb_info['lastPc'] = ins['offset']
         if 'fail' in self.bb:
-            bb_info['succs'].append(self.createSucc(self.bb['fail']))
+            bb_info['successors'].add(self.bb['fail'])
         if 'jump' in self.bb:
             jmp_addr = self.bb['jump']
             disass_j = self.pipeExecuteJ('pij 1 @ {}'.format(jmp_addr))[0]
@@ -195,38 +186,38 @@ class CFGCtx:
                 return
             target_fn = disass_j['fcn_addr']
             if target_fn == self.fn_addr:
-                bb_info['succs'].append(self.createSucc(jmp_addr))
+                bb_info['successors'].add(jmp_addr)
             else:
                 if 'jmp' in ins['opcode'] or 'call' in ins['opcode']:
                     # Tail calls are _usually_ called only via jmp and call
-                    bb_info['call_succs'].append(self.createSucc(jmp_addr))
+                    bb_info['callTargets'].add(jmp_addr)
                 else:
                     # Code pattern seen in astar for 64 bit. jump to 'cold' fragment
                     # of function, the BB for which is not part of the function
-                    bb_info['succs'].append(self.createSucc(jmp_addr))
+                    bb_info['successors'].add(jmp_addr)
 
         if 'jump' in ins:
             # Tail calls baby
             jmp_addr = ins['jump']
             target_fn = self.pipeExecuteJ('pij 1 @ {}'.format(jmp_addr))[0]['fcn_addr']
             if target_fn == self.fn_addr:
-                bb_info['succs'].append(self.createSucc(jmp_addr))
+                bb_info['successors'].add(jmp_addr)
             else:
                 if 'jmp' in ins['opcode'] or 'call' in ins['opcode']:
                     # Tail calls are _usually_ called only via jmp and call
-                    bb_info['call_succs'].append(self.createSucc(jmp_addr))
+                    bb_info['callTargets'].add(jmp_addr)
                 else:
                     # Code pattern seen in astar for 64 bit. jump to 'cold' fragment
                     # of function, the BB for which is not part of the function
-                    bb_info['succs'].append(self.createSucc(jmp_addr))
+                    bb_info['successors'].add(jmp_addr)
 
-        bb_info['succs'] = list({x['addr']:x for x in bb_info['succs']}.values())
-        bb_info['call_succs'] = list({x['addr']:x for x in bb_info['call_succs']}.values())
         if 'ret' in ins['opcode']:
-            bb_info['is_ret'] = 1
-        self._output[self.fn_addr]['bbs'].append(bb_info)
+            bb_info['isRet'] = 1
+        self._output['functions'][self.fn_addr]['blocks'].append(bb_info['address'])
+        self._output['blocks'][bb_info['address']] = bb_info
 
-"""
+
+'''
 HELPERS (S2E)
 ==============
 0xF4, // HLT
@@ -238,7 +229,8 @@ HELPERS (S2E)
 0xCE, // INT
 0xF2, // REPNE
 0xF3  // REPE
-"""
+'''
+
 
 def isTerminatorIns(ins):
     terminator_opcodes = ['hlt', 'int']
@@ -247,10 +239,12 @@ def isTerminatorIns(ins):
             return True
     return False
 
+
 def isCallIns(ins):
     if 'call' in ins:
         return True
     return False
+
 
 def isRepIns(ins):
     rep_opcodes = ['repne', 'repe', 'rep']
@@ -259,6 +253,7 @@ def isRepIns(ins):
             return True
     return False
 
+
 # def isFuncExit(ins):
 #     # Also, should include calls to non-returning functions (but can r2 find that?)
 #     exit_opcodes = ['jmp', 'call', 'ret']
@@ -266,16 +261,16 @@ def isRepIns(ins):
 #         if opcode in ins:
 #             return True
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     ftype = magic.from_file(args.infile)
     # Kernel modules are relocatable 
-    if "relocatable" in ftype:
-        rz = r2pipe.open(args.infile, flags=["-e", "bin.cache=true"])
+    if 'relocatable' in ftype:
+        rz = r2pipe.open(args.infile, flags=['-e', 'bin.cache=true'])
     else:
         rz = r2pipe.open(args.infile)
 
     if rz is None:
-        print("Could not open r2pipe. Abort!")
+        print('Could not open r2pipe. Abort!')
         exit()
 
     ctx = CFGCtx(rz)
@@ -340,4 +335,10 @@ if __name__ == "__main__":
                 bb_info['size'] += ins['size']
 
     with open(args.outfile, 'w') as f:
+        output = ctx.getOutput()
+        output['functions'] = list(output['functions'].values())
+        output['blocks'] = list(output['blocks'].values())
+        for block in output['blocks']:
+            block['successors'] = list(block['successors'])
+            block['callTargets'] = list(block['callTargets'])
         json.dump(ctx.getOutput(), f)

@@ -21,6 +21,7 @@
 /// SOFTWARE.
 ///
 
+#include <fstream>
 #include <llvm-c/Core.h>
 #include <llvm/Bitcode/BitcodeReader.h>
 #include <llvm/Bitcode/BitcodeWriter.h>
@@ -31,13 +32,12 @@
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Scalar/GVN.h>
 #include <sstream>
-#include <fstream>
 
 #include "Translator.h"
 
+#include <nlohmann/json.hpp>
 #include "lib/Utils/Log.h"
 #include "lib/Utils/Utils.h"
-#include <nlohmann/json.hpp>
 
 #include <tcg/tcg-llvm.h>
 
@@ -338,140 +338,99 @@ void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, co
     nlohmann::json j;
     i >> j;
 
-    if (j.contains("type") && j.at("type") == "s2e") {
-        // Dynamic trace. We ignore this for now.
-        return;
-    }
-
-    std::unordered_map<uint64_t, std::string> bb_map;
-    std::vector<std::pair<uint64_t, std::string>> worklist = {};
-    for (const auto &func : j.items()) {
-        for (const auto &bb : func.value()["bbs"]) {
-            if (bb["end"] == 0) {
-                worklist.push_back(std::make_pair(bb["start"], func.key()));
-            } else {
-                bb_map[bb["start"]] = func.key();
-            }
+    DenseSet<uint64_t> translatedBlocks;
+    std::vector<uint64_t> worklist;
+    const auto &jBlocks = j["blocks"];
+    nlohmann::json newBlocks;
+    for (const auto &block : jBlocks) {
+        const auto &blockAddress = block["address"];
+        if (block["size"] == 0) {
+            worklist.emplace_back(block["address"]);
+        } else {
+            translatedBlocks.insert(blockAddress);
+            newBlocks.emplace_back(block);
         }
     }
 
     while (!worklist.empty()) {
-        auto back = worklist.back();
-
-        auto bb_start = back.first;
+        const auto blockAddress = worklist.back();
         worklist.pop_back();
 
         // We have already parsed this TB. No more exploration needed here
-        if (bb_map.find(bb_start) != bb_map.end()) {
+        if (translatedBlocks.find(blockAddress) != translatedBlocks.end()) {
             continue;
         }
 
-        TranslatedBlock *tb = translate(bb_start, 0);
+        TranslatedBlock *tb = translate(blockAddress, 0);
         auto info = m_ctx->getTbInfo();
-        
-        std::vector<std::pair<uint64_t, ETranslationBlockType>> succs{}, call_succs{};
-        bool is_ret = false;
+
+        std::vector<uint64_t> succs;
+        std::vector<uint64_t> callSuccs;
+        auto isIndirect = false;
 
         switch (tb->getType()) {
             case BB_JMP:
-                succs.push_back(std::make_pair(info.staticBranchTargets[0], TB_JMP));
+                succs.push_back(info.staticBranchTargets[0]);
                 break;
 
             case BB_COND_JMP:
-                succs.push_back(std::make_pair(info.staticBranchTargets[0], TB_COND_JMP));
-                succs.push_back(std::make_pair(info.staticBranchTargets[1], TB_COND_JMP));
+                llvm::copy(info.staticBranchTargets, std::back_inserter(succs));
                 break;
 
             case BB_CALL:
-                call_succs.push_back(std::make_pair(info.staticBranchTargets[0], TB_CALL));
-                succs.push_back(std::make_pair(bb_start + tb->getSize(), TB_JMP));
+                callSuccs.push_back(info.staticBranchTargets[0]);
+                // Don't add the address past the call (i.e. blockAddress+tb->getSize()). It might not return and this
+                // could mess up the CFG.
                 break;
 
             case BB_REP:
-                succs.push_back(std::make_pair(info.staticBranchTargets[0], TB_REP));
-                succs.push_back(std::make_pair(info.staticBranchTargets[1], TB_REP));
+                llvm::copy(info.staticBranchTargets, std::back_inserter(succs));
                 break;
 
             case BB_RET:
-                is_ret = true;
                 break;
 
-            // Cant handle indirect jumps/calls
             case BB_JMP_IND:
             case BB_CALL_IND:
             case BB_COND_JMP_IND:
-            // Nohing to handle
+                isIndirect = true;
+                break;
+
             case BB_EXCP:
             case BB_DEFAULT:
                 break;
         }
 
-        LOGERROR("Fixing block: 0x" << hexval(bb_start) << "\n");
+        LOGERROR("Fixing block: " << hexval(blockAddress) << "\n");
 
-        nlohmann::json new_tb = {};
-        new_tb["start"] = bb_start;
-        new_tb["end"] = tb->getLastAddress();
-        new_tb["size"] = tb->getSize();
-        new_tb["is_ret"] = is_ret;
-        new_tb["succs"] = nlohmann::json::array();
-        new_tb["call_succs"] = nlohmann::json::array();
+        nlohmann::json newBlock{{"address", blockAddress},
+                                {"lastPc", tb->getLastAddress()},
+                                {"size", tb->getSize()},
+                                {"isIndirect", isIndirect}};
 
+        auto &jSuccs = newBlock["successors"];
         for (auto succ : succs) {
-            nlohmann::json j_succ = {};
-            j_succ["addr"] = succ.first;
-            j_succ["type"] = succ.second;
-            new_tb["succs"].push_back(j_succ);
-
-            auto it = bb_map.find(succ.first);
-            if (it == bb_map.end()) {
-                worklist.push_back(std::make_pair(succ.first, back.second));
-            }
+            jSuccs.push_back(succ);
+            worklist.push_back(succ);
         }
 
-        for (auto call_succ : call_succs) {
-            nlohmann::json j_succ = {};
-            j_succ["addr"] = call_succ.first;
-            j_succ["type"] = call_succ.second;
-            new_tb["call_succs"].push_back(j_succ);
-
-            auto it = bb_map.find(call_succ.first);
-            if (it == bb_map.end()) {
-                worklist.push_back(std::make_pair(call_succ.first, std::to_string(call_succ.first)));
-            }
+        auto &jCallTargets = newBlock["callTargets"];
+        for (auto callSucc : callSuccs) {
+            jCallTargets.push_back(callSucc);
+            worklist.push_back(callSucc);
         }
 
-        auto jit = j.find(back.second);
-        if (jit == j.end()) {
-            nlohmann::json new_f = {};
-            new_f["bbs"] = nlohmann::json::array();
-            std::stringstream ss;
-            ss << std::hex << bb_start;
-            new_f["name"] = std::string("fcn.") + ss.str();
-            new_f["ret_blocks"] = nlohmann::json::array();
-            j[back.second] = new_f;
-        }
-
-        bool found = false;
-        for (auto &bb : j[back.second]["bbs"]) {
-            if (bb["start"] == bb_start) {
-                found = true;
-                bb = new_tb;
-                break;
-            }
-        }
-
-        if (!found) {
-            j[back.second]["bbs"].push_back(new_tb);
-        }
-
-        bb_map.insert({bb_start, back.second});
+        newBlocks.push_back(std::move(newBlock));
+        translatedBlocks.insert(blockAddress);
     }
+
+    j["blocks"] = std::move(newBlocks);
 
     i.close();
 
     // Write back!
     std::ofstream o{cfgJson, std::ios::trunc};
-    o << j.dump(4);
+    o << j;
 }
 
 /*****************************************************************************/
@@ -534,7 +493,6 @@ static const uint64_t TCG_EXT2_FEATURES = ((TCG_FEATURES & EXT2_FEATURE_MASK) | 
 CPUID_EXT2_PDPE1GB */
 static const uint64_t TCG_EXT3_FEATURES =
     (CPUID_EXT3_LAHF_LM | CPUID_EXT3_SVM | CPUID_EXT3_CR8LEG | CPUID_EXT3_ABM | CPUID_EXT3_SSE4A);
-
 
 TranslatedBlock *X86Translator::translate(uint64_t address, uint64_t lastAddress) {
     static uint8_t s_dummyBuffer[10 * 1024 * 1024];

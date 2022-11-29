@@ -66,52 +66,41 @@ bool ParseExternalCfgFile(const std::string &file, BinaryBasicBlocks &bbs, Binar
     nlohmann::json j;
     i >> j;
 
-    if (j.contains("type") && j.at("type") == "s2e") {
-        for (const auto &block : j.at("blocks")) {
-            const uint64_t address = block["address"];
-            const uint64_t lastPc = block["lastPc"];
-            const unsigned size = block["size"];
-            auto *const bf = new BinaryFunction(formatv("Func_{0:X-}", address));
-            functions.insert(bf);
-            auto *const bb = new BinaryBasicBlock{address, lastPc, size};
-            bbs.insert(bb);
-            bf->add(bb);
-            bf->setEntryBlock(bb);
+    for (const auto &jbb : j.at("blocks")) {
+        auto *const bb = new BinaryBasicBlock(jbb.at("address"), jbb.at("lastPc"), jbb.at("size"));
+        bbs.insert(bb);
+    }
+
+    for (const auto &jbb : j.at("blocks")) {
+        auto *const bb = bbs.find(jbb.at("address"));
+
+        for (const auto &jsuccessor : jbb.at("successors")) {
+            auto *const successor = bbs.find(jsuccessor);
+            if (!successor) {
+                llvm::errs() << formatv("Block {0:X} has incorrect succ {1:X}\n", bb->getStartPc(),
+                                        jsuccessor.get<uint64_t>());
+                continue;
+            }
+            bb->addSucc(successor);
+            successor->addPred(bb);
         }
-    } else {
-        for (const auto &func : j.items()) {
-            BinaryFunction *bf = new BinaryFunction(func.value()["name"]);
-            functions.insert(bf);
+    }
 
-            for (const auto &bb : func.value()["bbs"]) {
-                // errs() << "Analyzing : " << hexval(bb["start"]) << ":" << hexval(bb["end"]) << ":" << func.key()
-                // <<
-                // "\n";
-                BinaryBasicBlock *binaryBb = new BinaryBasicBlock(bb["start"], bb["end"], bb["size"]);
-                bbs.insert(binaryBb);
+    for (const auto &jfunc : j.at("functions")) {
+        auto *const bf = new BinaryFunction(jfunc.at("symbolName"));
+        functions.insert(bf);
 
-                if (binaryBb->getStartPc() == stoi(func.key()))
-                    bf->setEntryBlock(binaryBb);
-
-                bf->add(binaryBb);
+        for (const auto &jbb : jfunc.at("blocks")) {
+            auto *const bb = bbs.find(jbb);
+            if (!bb) {
+                errs() << formatv("Cannot find block {0:X} in function {1:X}\n", jbb.get<uint64_t>(),
+                                  jfunc.at("address").get<uint64_t>());
+                continue;
             }
 
-            for (const auto &bb : func.value()["bbs"]) {
-                BinaryBasicBlock *binaryBb = bbs.find(bb["start"]);
-                assert(binaryBb);
-
-                for (const auto &succ : bb["succs"]) {
-                    BinaryBasicBlock *bb = bbs.find(succ["addr"]);
-                    if (!bb) {
-                        llvm::errs() << "Block " << hexval(stoi(func.key())) << " has incorrect succs "
-                                     << hexval(succ["addr"]) << "\n";
-                        continue;
-                    }
-
-                    binaryBb->addSucc(bb);
-                    bb->addPred(binaryBb);
-                }
-            }
+            bf->add(bb);
+            if (bb->getStartPc() == jfunc.at("address"))
+                bf->setEntryBlock(bb);
         }
     }
 

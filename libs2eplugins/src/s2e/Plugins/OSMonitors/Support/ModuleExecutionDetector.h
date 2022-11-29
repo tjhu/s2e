@@ -163,7 +163,7 @@ private:
 
     void onTranslateBlockComplete(S2EExecutionState *state, TranslationBlock *tb, uint64_t pc);
 
-    void onExecution(S2EExecutionState *state, uint64_t pc, ModuleDescriptorConstPtr currentModule);
+    void onExecution(S2EExecutionState *state, uint64_t pc, ModuleDescriptorConstPtr targetModule);
 
     void exceptionListener(S2EExecutionState *state, unsigned intNb, uint64_t pc);
 

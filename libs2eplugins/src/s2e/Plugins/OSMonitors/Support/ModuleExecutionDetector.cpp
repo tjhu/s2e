@@ -220,10 +220,10 @@ void ModuleExecutionDetector::onTranslateBlockEnd(ExecutionSignal *signal, S2EEx
             auto targetModule = getDescriptor(state, targetPc);
 
             if (targetModule != currentModule) {
-                signal->connect(sigc::bind(sigc::mem_fun(*this, &ModuleExecutionDetector::onExecution), currentModule));
+                signal->connect(sigc::bind(sigc::mem_fun(*this, &ModuleExecutionDetector::onExecution), targetModule));
             }
         } else {
-            signal->connect(sigc::bind(sigc::mem_fun(*this, &ModuleExecutionDetector::onExecution), currentModule));
+            signal->connect(sigc::bind(sigc::mem_fun(*this, &ModuleExecutionDetector::onExecution), nullptr));
         }
     }
 
@@ -251,12 +251,17 @@ void ModuleExecutionDetector::exceptionListener(S2EExecutionState *state, unsign
 }
 
 void ModuleExecutionDetector::onExecution(S2EExecutionState *state, uint64_t pc,
-                                          ModuleDescriptorConstPtr currentModule) {
+                                          ModuleDescriptorConstPtr targetModule) {
     DECLARE_PLUGINSTATE(ModuleTransitionState, state);
 
-    if (plgState->m_previousModule != currentModule) {
-        onModuleTransition.emit(state, plgState->m_previousModule, currentModule);
-        plgState->m_previousModule = currentModule;
+    if (!targetModule) {
+        auto targetPc = state->regs()->getPc();
+        targetModule = getDescriptor(state, targetPc);
+    }
+
+    if (plgState->m_previousModule != targetModule) {
+        onModuleTransition.emit(state, plgState->m_previousModule, targetModule);
+        plgState->m_previousModule = targetModule;
     }
 }
 
