@@ -49,14 +49,16 @@ auto toCFType(ETranslationBlockType tbType) -> CFType {
     switch (tbType) {
         case TB_DEFAULT:
         case TB_JMP:
-        case TB_JMP_IND:
         case TB_COND_JMP:
-        case TB_COND_JMP_IND:
         case TB_REP:
             return CFType::Jump;
+        case TB_JMP_IND:
+        case TB_COND_JMP_IND:
+            return CFType::IndJump;
         case TB_CALL:
-        case TB_CALL_IND:
             return CFType::Call;
+        case TB_CALL_IND:
+            return CFType::IndCall;
         case TB_RET:
             return CFType::Return;
             break;

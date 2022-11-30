@@ -19,10 +19,14 @@ struct MappedSegment {
 };
 
 enum class CFType {
-    /// Direct jumps, indirect jumps, tail calls, rep prefix and fallthroughs.
+    /// Direct jumps, tail calls, rep prefix and fallthroughs.
     Jump,
-    /// Direct and indirect calls.
+    /// Indirect jumps.
+    IndJump,
+    /// Direct calls.
     Call,
+    /// Indirect calls.
+    IndCall,
     /// Returning with a return instruction.
     Return,
     /// Everything that we can't easily model: interrupts, iret, exceptions, and sysenter.
