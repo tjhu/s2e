@@ -70,7 +70,7 @@ class CFGCtx:
         self.prev_ins = None
 
     def createOutputBB(self, addr):
-        return {'address': addr, 'successors': set(), 'callTargets': set(), 'size': 0, 'lastPc': 0, 'isRet': 0,
+        return {'address': addr, 'successors': set(), 'callTargets': set(), 'size': 0, 'lastPc': 0, 'isRet': False,
                 'isIndirect': False}
 
     def handleTerminatorIns(self, idx, bb_info):
@@ -212,7 +212,7 @@ class CFGCtx:
                     bb_info['successors'].add(jmp_addr)
 
         if 'ret' in ins['opcode']:
-            bb_info['isRet'] = 1
+            bb_info['isRet'] = True
         self._output['functions'][self.fn_addr]['blocks'].append(bb_info['address'])
         self._output['blocks'][bb_info['address']] = bb_info
 
