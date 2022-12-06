@@ -645,7 +645,7 @@ TranslatedBlock *X86Translator::translate(uint64_t address, uint64_t lastAddress
             if (info.staticBranchTargets.size() != 0) {
                 LOGERROR("TB " << hexval(address) << " static targets mismatch TB type\n");
                 LOGERROR("Most likely " << hexval(address) << " ends in exception instruction\n");
-                return NULL;
+                // return NULL;
             }
             break;
 

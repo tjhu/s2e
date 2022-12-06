@@ -147,7 +147,7 @@ void RevGen::translate(const llvm::BinaryFunctions &functions, const llvm::Binar
 
         const auto tit = m_tbs.find(target);
         if (tit == m_tbs.end()) {
-            LOGWARNING("Could not find entry point " << hexval(target) << " for unknown function");
+            LOGWARNING("Could not find entry point " << hexval(target) << " for unknown function\n");
             continue;
         }
 
