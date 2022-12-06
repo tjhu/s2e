@@ -224,8 +224,8 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    translator.translate(functions, toTranslate);
     translator.exploreCfg(ExternalCfg);
+    translator.translate(functions, toTranslate);
     translator.writeBitcodeFile(OutputFile);
 
     return 0;
