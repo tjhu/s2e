@@ -186,14 +186,17 @@ void ControlFlowTracer::onModuleTranslateBlockEnd(ExecutionSignal *signal, S2EEx
                                                   const ModuleDescriptor &module, TranslationBlock *tb, uint64_t endPc,
                                                   bool staticTarget, uint64_t targetPc) {
     if (staticTarget) {
-        const auto &targetModule = m_detector->getDescriptor(state, targetPc);
+        const ModuleDescriptorConstPtr targetModule = m_detector->getDescriptor(state, targetPc);
         m_gen.registerBlock(targetPc);
         if (targetModule) {
             m_gen.recordTransfer(tb->pc, targetPc);
-            return;
+        } else if (const CFType tbType = toCFType(tb->se_tb_type);
+                   tbType == CFType::Call || tbType == CFType::IndCall) {
+            m_gen.recordTransfer(tb->pc, 1);
         }
+    } else {
+        signal->connect(sigc::mem_fun(*this, &ControlFlowTracer::onModuleBlockExecutionEnd));
     }
-    signal->connect(sigc::mem_fun(*this, &ControlFlowTracer::onModuleBlockExecutionEnd));
 }
 
 void ControlFlowTracer::onModuleTranslateBlockComplete(S2EExecutionState *state, const ModuleDescriptor &module,
@@ -212,13 +215,14 @@ void ControlFlowTracer::onModuleBlockExecutionStart(S2EExecutionState *state, ui
 void ControlFlowTracer::onModuleBlockExecutionEnd(S2EExecutionState *state, uint64_t pc) {
     DECLARE_PLUGINSTATE(CFTState, state);
 
-    const auto &targetPc = state->regs()->getPc();
-    const auto &targetModule = m_detector->getDescriptor(state, targetPc);
-    if (!targetModule) {
-        return;
+    const uint64_t targetPc = state->regs()->getPc();
+    const ModuleDescriptorConstPtr targetModule = m_detector->getDescriptor(state, targetPc);
+    if (targetModule) {
+        m_gen.recordTransfer(plgState->getLastBlockAddress(), targetPc);
+    } else if (const CFType tbType = toCFType(state->getTb()->se_tb_type);
+               tbType == CFType::Call || tbType == CFType::IndCall) {
+        m_gen.recordTransfer(plgState->getLastBlockAddress(), 1);
     }
-
-    m_gen.recordTransfer(plgState->getLastBlockAddress(), targetPc);
 }
 
 void ControlFlowTracer::onTranslateInstructionStart(ExecutionSignal *signal, S2EExecutionState *state,
