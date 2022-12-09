@@ -21,31 +21,33 @@ public:
         return m_lastBlockAddress;
     }
 
-    void setLastBlockAddress(Address value) {
+    void setLastBlockAddress(const Address value) {
         m_lastBlockAddress = value;
+        m_external = false;
     }
 
     auto isExternal() const -> bool {
-        return m_lastBlockAddress == 0;
+        return m_external;
     }
 
     void leaveModule() {
-        m_lastBlockAddress = 0;
+        m_external = true;
     }
 
     auto clone() const -> CFTState * override {
         return new CFTState{*this};
     }
 
-    static auto factory(Plugin *p, S2EExecutionState *s) -> PluginState * {
-        return new CFTState;
+    static auto factory(Plugin *const p, S2EExecutionState *const s) -> PluginState * {
+        return new CFTState{};
     }
 
 private:
     Address m_lastBlockAddress = 0;
+    bool m_external = true;
 };
 
-auto toCFType(ETranslationBlockType tbType) -> CFType {
+auto toCFType(const ETranslationBlockType tbType) -> CFType {
     switch (tbType) {
         case TB_DEFAULT:
         case TB_JMP:
@@ -75,10 +77,10 @@ auto toCFType(ETranslationBlockType tbType) -> CFType {
 }
 } // namespace
 
-TracedBlock::TracedBlock(Address address) : address{address} {
+TracedBlock::TracedBlock(const Address address) : address{address} {
 }
 
-void TracedBlock::update(Address lastPc, uint64_t size, CFType cfType) {
+void TracedBlock::update(const Address lastPc, const uint64_t size, const CFType cfType) {
     this->lastPc = lastPc;
     this->size = size;
     this->cfType = cfType;
@@ -102,29 +104,29 @@ auto TraceInfoGen::getTraceInfo() const -> const TraceInfo & {
     return m_traceInfo;
 }
 
-void TraceInfoGen::registerBlock(Address address) {
+void TraceInfoGen::registerBlock(const Address address) {
     assert(address != 0 && "Cannot register block at address 0");
-    const auto isNew = m_blockIndex.insert({address, IndexedBlock{m_traceInfo.blocks.size()}}).second;
+    const bool isNew = m_blockIndex.insert({address, IndexedBlock{m_traceInfo.blocks.size()}}).second;
     if (isNew) {
         m_traceInfo.blocks.emplace_back(address);
     }
 }
 
-void TraceInfoGen::updateBlock(Address address, Address lastPc, uint64_t size, CFType cfType) {
+void TraceInfoGen::updateBlock(const Address address, const Address lastPc, const uint64_t size, const CFType cfType) {
     assert(address != 0 && "Cannot register block at address 0");
     assert(size > 0 && "Block cannot be of size 0");
     assert(m_blockIndex.count(address) == 1 && "Block not registered");
     m_traceInfo.blocks[m_blockIndex.lookup(address).block_index].update(lastPc, size, cfType);
 }
 
-void TraceInfoGen::registerInstruction(Address block, Address pc) {
+void TraceInfoGen::registerInstruction(const Address block, const Address pc) {
     assert(block != 0 && "Cannot register instruction to zero-block");
     assert(pc - block < std::numeric_limits<uint16_t>::max() && "Block shouldn't be larger than 65KB");
     assert(m_blockIndex.count(block) == 1 && "Block not registered");
     m_traceInfo.blocks[m_blockIndex.lookup(block).block_index].instructions.emplace_back(pc - block);
 }
 
-void TraceInfoGen::recordTransfer(Address from, Address to) {
+void TraceInfoGen::recordTransfer(const Address from, const Address to) {
     const auto fromIt = m_blockIndex.find(from);
     assert(fromIt != m_blockIndex.end() && "from-block not found");
     auto &succs = fromIt->second.succs;
@@ -135,7 +137,7 @@ void TraceInfoGen::recordTransfer(Address from, Address to) {
     }
 }
 
-void TraceInfoGen::recordEntry(Address addr) {
+void TraceInfoGen::recordEntry(const Address addr) {
     assert(addr != 0 && "Address 0 cannot be an entry");
     if (!m_entryIndex.contains(addr)) {
         m_entryIndex.insert(addr);
@@ -143,11 +145,11 @@ void TraceInfoGen::recordEntry(Address addr) {
     }
 }
 
-void TraceInfoGen::registerSegment(std::string name, Address loadAddress, uint64_t size) {
+void TraceInfoGen::registerSegment(std::string name, const Address loadAddress, const uint64_t size) {
     m_traceInfo.segments.push_back({std::move(name), loadAddress, size});
 }
 
-ControlFlowTracer::ControlFlowTracer(S2E *s2e) : Plugin(s2e) {
+ControlFlowTracer::ControlFlowTracer(S2E *const s2e) : Plugin(s2e) {
 }
 
 void ControlFlowTracer::initialize() {
@@ -176,35 +178,37 @@ void ControlFlowTracer::onEngineShutdown() {
     out << json.dump();
 }
 
-void ControlFlowTracer::onModuleTranslateBlockStart(ExecutionSignal *signal, S2EExecutionState *state,
-                                                    const ModuleDescriptor &module, TranslationBlock *tb, uint64_t pc) {
+void ControlFlowTracer::onModuleTranslateBlockStart(ExecutionSignal *const signal, S2EExecutionState *const state,
+                                                    const ModuleDescriptor &module, TranslationBlock *const tb,
+                                                    const uint64_t pc) {
     m_gen.registerBlock(tb->pc);
     signal->connect(sigc::mem_fun(*this, &ControlFlowTracer::onModuleBlockExecutionStart));
 }
 
-void ControlFlowTracer::onModuleTranslateBlockEnd(ExecutionSignal *signal, S2EExecutionState *state,
-                                                  const ModuleDescriptor &module, TranslationBlock *tb, uint64_t endPc,
-                                                  bool staticTarget, uint64_t targetPc) {
+void ControlFlowTracer::onModuleTranslateBlockEnd(ExecutionSignal *const signal, S2EExecutionState *const state,
+                                                  const ModuleDescriptor &module, TranslationBlock *const tb,
+                                                  const uint64_t endPc, const bool staticTarget,
+                                                  const uint64_t targetPc) {
     if (staticTarget) {
-        const ModuleDescriptorConstPtr targetModule = m_detector->getDescriptor(state, targetPc);
-        m_gen.registerBlock(targetPc);
-        if (targetModule) {
-            m_gen.recordTransfer(tb->pc, targetPc);
-        } else if (const CFType tbType = toCFType(tb->se_tb_type);
-                   tbType == CFType::Call || tbType == CFType::IndCall) {
-            m_gen.recordTransfer(tb->pc, 1);
+        const bool targetInModule = m_detector->getDescriptor(state, targetPc) != nullptr;
+        const bool isCall = toCFType(tb->se_tb_type) == CFType::Call;
+        const bool isExternalCall = !targetInModule && isCall;
+
+        if (targetInModule || isExternalCall) {
+            const uint64_t recordTargetPc = targetInModule ? targetPc : 1;
+            m_gen.recordTransfer(tb->pc, recordTargetPc);
         }
     } else {
         signal->connect(sigc::mem_fun(*this, &ControlFlowTracer::onModuleBlockExecutionEnd));
     }
 }
 
-void ControlFlowTracer::onModuleTranslateBlockComplete(S2EExecutionState *state, const ModuleDescriptor &module,
-                                                       TranslationBlock *tb, uint64_t lastPc) {
+void ControlFlowTracer::onModuleTranslateBlockComplete(S2EExecutionState *const state, const ModuleDescriptor &module,
+                                                       TranslationBlock *const tb, const uint64_t lastPc) {
     m_gen.updateBlock(tb->pc, lastPc, tb->size, toCFType(tb->se_tb_type));
 }
 
-void ControlFlowTracer::onModuleBlockExecutionStart(S2EExecutionState *state, uint64_t pc) {
+void ControlFlowTracer::onModuleBlockExecutionStart(S2EExecutionState *const state, const uint64_t pc) {
     DECLARE_PLUGINSTATE(CFTState, state);
     if (plgState->isExternal()) {
         m_gen.recordEntry(pc);
@@ -212,22 +216,23 @@ void ControlFlowTracer::onModuleBlockExecutionStart(S2EExecutionState *state, ui
     plgState->setLastBlockAddress(pc);
 }
 
-void ControlFlowTracer::onModuleBlockExecutionEnd(S2EExecutionState *state, uint64_t pc) {
+void ControlFlowTracer::onModuleBlockExecutionEnd(S2EExecutionState *const state, const uint64_t pc) {
     DECLARE_PLUGINSTATE(CFTState, state);
 
     const uint64_t targetPc = state->regs()->getPc();
-    const ModuleDescriptorConstPtr targetModule = m_detector->getDescriptor(state, targetPc);
-    if (targetModule) {
-        m_gen.recordTransfer(plgState->getLastBlockAddress(), targetPc);
-    } else if (const CFType tbType = toCFType(state->getTb()->se_tb_type);
-               tbType == CFType::Call || tbType == CFType::IndCall) {
-        m_gen.recordTransfer(plgState->getLastBlockAddress(), 1);
+    const bool targetInModule = m_detector->getDescriptor(state, targetPc) != nullptr;
+    const bool isCall = toCFType(state->getTb()->se_tb_type) == CFType::IndCall;
+    const bool isExternalCall = !targetInModule && isCall;
+
+    if (targetInModule || isExternalCall) {
+        const uint64_t recordTargetPc = targetInModule ? targetPc : 1;
+        m_gen.recordTransfer(plgState->getLastBlockAddress(), recordTargetPc);
     }
 }
 
-void ControlFlowTracer::onTranslateInstructionStart(ExecutionSignal *signal, S2EExecutionState *state,
-                                                    TranslationBlock *tb, uint64_t pc) {
-    const auto &currentModule = m_detector->getDescriptor(state, pc);
+void ControlFlowTracer::onTranslateInstructionStart(ExecutionSignal *const signal, S2EExecutionState *const state,
+                                                    TranslationBlock *const tb, const uint64_t pc) {
+    const ModuleDescriptorConstPtr currentModule = m_detector->getDescriptor(state, pc);
     if (!currentModule) {
         return;
     }
@@ -235,18 +240,19 @@ void ControlFlowTracer::onTranslateInstructionStart(ExecutionSignal *signal, S2E
     m_gen.registerInstruction(tb->pc, pc);
 }
 
-void ControlFlowTracer::onModuleTransition(S2EExecutionState *state, ModuleDescriptorConstPtr prev,
-                                           ModuleDescriptorConstPtr next) {
+void ControlFlowTracer::onModuleTransition(S2EExecutionState *const state, const ModuleDescriptorConstPtr prev,
+                                           const ModuleDescriptorConstPtr next) {
     DECLARE_PLUGINSTATE(CFTState, state);
     if (!next) {
         plgState->leaveModule();
     }
 }
 
-void ControlFlowTracer::onModuleLoad(S2EExecutionState *state, const ModuleDescriptor &module) {
+void ControlFlowTracer::onModuleLoad(S2EExecutionState *const state, const ModuleDescriptor &module) {
     if (m_pDetector->isTracked(state, module.Pid)) {
-        for (const auto &section : module.Sections)
+        for (const SectionDescriptor &section : module.Sections) {
             m_gen.registerSegment(module.Name, section.runtimeLoadBase, section.size);
+        }
     }
 }
 
