@@ -194,6 +194,10 @@ void ControlFlowTracer::onModuleTranslateBlockEnd(ExecutionSignal *const signal,
         const bool isCall = toCFType(tb->se_tb_type) == CFType::Call;
         const bool isExternalCall = !targetInModule && isCall;
 
+        if (targetInModule) {
+            // Register block so translator can pick it up later even if it is not executed.
+            m_gen.registerBlock(targetPc);
+        }
         if (targetInModule || isExternalCall) {
             const uint64_t recordTargetPc = targetInModule ? targetPc : 1;
             m_gen.recordTransfer(tb->pc, recordTargetPc);
