@@ -40,6 +40,8 @@ class TCGLLVMTranslator;
 
 namespace s2etools {
 
+const uint64_t EXTERNAL_TARGET = 1;
+
 class InvalidAddressException {
     uintptr_t m_address;
     unsigned m_size;

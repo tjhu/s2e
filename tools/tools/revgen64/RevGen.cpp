@@ -97,6 +97,10 @@ TranslatedBlock *RevGen::translate(uint64_t start, uint64_t end) {
     LOGDEBUG("========================================\n");
     LOGDEBUG("Translating: " << hexval(start) << " to " << hexval(end) << "\n");
 
+    if (start == EXTERNAL_TARGET) {
+        return nullptr;
+    }
+
     TranslatedBlock *tb = m_translator->translate(start, end);
     if (!tb) {
         LOGERROR("Could not translate block\n");
