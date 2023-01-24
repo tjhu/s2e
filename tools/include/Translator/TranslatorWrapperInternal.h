@@ -613,7 +613,7 @@ int ldl_kernel_s2e_trace(target_ulong ptr) {
     return 0;
 }
 
-int cpu_ldq_data(CPUArchState *env, target_ulong ptr) {
+uint64_t cpu_ldq_data(CPUArchState *env, target_ulong ptr) {
     assert(false && "Not usable statically");
     return 0;
 }
@@ -642,11 +642,11 @@ void cpu_stl_kernel(CPUArchState *env, target_ulong ptr, uint32_t data) {
     assert(false && "Not usable statically");
 }
 
-void cpu_stq_kernel(CPUArchState *env, target_ulong ptr, uint32_t data) {
+void cpu_stq_kernel(CPUArchState *env, target_ulong ptr, uint64_t data) {
     assert(false && "Not usable statically");
 }
 
-void cpu_stq_data(CPUArchState *env, target_ulong ptr, uint32_t data) {
+void cpu_stq_data(CPUArchState *env, target_ulong ptr, uint64_t data) {
     assert(false && "Not usable statically");
 }
 }

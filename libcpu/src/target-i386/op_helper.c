@@ -94,6 +94,9 @@ static inline target_long lshift(target_long x, int n) {
 #define MANTD(fp)        (fp.l.lower)
 #define BIASEXPONENT(fp) fp.l.upper = (fp.l.upper & ~(0x7fff)) | EXPBIAS
 
+uint64_t cpu_ldq_data(CPUX86State *env, target_ulong ptr);
+void cpu_stq_data(CPUX86State *env, target_ulong ptr, uint64_t data);
+
 static inline void fpush(void) {
     FPSTT_W((FPSTT - 1) & 7);
     FPTAGS_W(FPSTT, 0); /* validate stack entry */
@@ -105,11 +108,12 @@ static inline void fpop(void) {
 }
 
 static inline floatx80 helper_fldt(target_ulong ptr) {
-    CPU_LDoubleU temp;
+    floatx80 temp;
+    // CPU_LDoubleU temp;
 
-    temp.l.lower = ldq(ptr);
-    temp.l.upper = lduw(ptr + 8);
-    return temp.d;
+    temp.low = ldq(ptr);
+    temp.high = lduw(ptr + 8);
+    return temp;
 }
 
 static inline void helper_fstt(floatx80 f, target_ulong ptr) {
