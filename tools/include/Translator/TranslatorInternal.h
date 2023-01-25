@@ -524,7 +524,7 @@ TranslatedBlock *X86Translator::translate(uint64_t address, uint64_t lastAddress
 
     env.cpuid.cpuid_features = PPRO_FEATURES | CPUID_MTRR | CPUID_CLFLUSH | CPUID_MCA | CPUID_PSE36;
 
-    env.cpuid.cpuid_ext_features = CPUID_EXT_SSE3 | CPUID_EXT_CX16 | CPUID_EXT_POPCNT;
+    env.cpuid.cpuid_ext_features = CPUID_EXT_SSE3 | CPUID_EXT_CX16 | CPUID_EXT_POPCNT | CPUID_EXT_SSE42;
 
     env.cpuid.cpuid_ext2_features =
         (PPRO_FEATURES & EXT2_FEATURE_MASK) | CPUID_EXT2_LM | CPUID_EXT2_SYSCALL | CPUID_EXT2_NX;
