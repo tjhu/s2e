@@ -19,6 +19,7 @@
 #include <cpu/ioport.h>
 #include <math.h>
 #include <timer.h>
+#include <stdatomic.h>
 #include "cpu-defs.h"
 #include "cpu.h"
 
@@ -261,6 +262,10 @@ void helper_unlock(void) {
 #ifdef STATIC_TRANSLATOR
     spin_unlock(&global_cpu_lock);
 #endif
+}
+
+void helper_memfence(void) {
+    __sync_synchronize();
 }
 
 void helper_write_eflags(target_ulong t0, uint32_t update_mask) {

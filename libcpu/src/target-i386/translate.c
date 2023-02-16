@@ -7615,6 +7615,7 @@ reswitch:
                 case 6: /* mfence */
                     if ((modrm & 0xc7) != 0xc0 || !(s->cpuid_features & CPUID_SSE2))
                         goto illegal_op;
+                    gen_helper_memfence();
                     break;
                 case 7: /* sfence / clflush */
                     if ((modrm & 0xc7) == 0xc0) {
@@ -7622,6 +7623,7 @@ reswitch:
                         /* XXX: also check for cpuid_ext2_features & CPUID_EXT2_EMMX */
                         if (!(s->cpuid_features & CPUID_SSE))
                             goto illegal_op;
+                        gen_helper_memfence();
                     } else {
                         /* clflush */
                         if (!(s->cpuid_features & CPUID_CLFLUSH))
