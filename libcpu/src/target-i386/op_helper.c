@@ -2157,20 +2157,129 @@ void helper_into(int next_eip_addend) {
 
 void helper_cmpxchg8b(target_ulong a0) {
     uint64_t d;
+    uint64_t oldval, newval, result;
     int eflags;
 
     eflags = helper_cc_compute_all(CC_OP);
+
     d = ldq(a0);
-    if (d == (((uint64_t) EDX << 32) | (uint32_t) EAX)) {
-        stq(a0, ((uint64_t) ECX << 32) | (uint32_t) EBX);
+    oldval = (uint64_t) EDX << 32 | (uint32_t) EAX;
+    newval = (uint64_t) ECX << 32 | (uint32_t) EBX;
+    uint64_t* ptr = (uint64_t*)(uintptr_t)a0;
+    result = __sync_val_compare_and_swap(ptr, oldval, newval);
+
+    if (result == d) {
         eflags |= CC_Z;
     } else {
-        /* always do the store */
-        stq(a0, d);
         EDX_W((uint32_t) (d >> 32));
         EAX_W((uint32_t) d);
         eflags &= ~CC_Z;
     }
+    // if (d == (((uint64_t) EDX << 32) | (uint32_t) EAX)) {
+    //     stq(a0, ((uint64_t) ECX << 32) | (uint32_t) EBX);
+    //     eflags |= CC_Z;
+    // } else {
+    //     /* always do the store */
+    //     stq(a0, d);
+    //     EDX_W((uint32_t) (d >> 32));
+    //     EAX_W((uint32_t) d);
+    //     eflags &= ~CC_Z;
+    // }
+    CC_SRC_W(eflags);
+}
+
+/* operand size */
+enum {
+    OT_BYTE = 0,
+    OT_WORD,
+    OT_LONG,
+    OT_QUAD,
+};
+
+void helper_cmpxchg(target_ulong a0, target_ulong t1, target_ulong ot) {
+    int eflags;
+    eflags = helper_cc_compute_all(CC_OP);
+
+    if (ot == OT_BYTE) {
+        uint8_t d;
+        uint8_t oldval, newval, result;
+
+        oldval = (uint8_t) EAX;
+        newval = (uint8_t) t1;
+
+        d = ldub(a0);
+        uint8_t* ptr = (uint8_t*)(uintptr_t)a0;
+        result = __sync_val_compare_and_swap(ptr, oldval, newval);
+
+        if (result == d) {
+            // stb(a0, newval);
+            eflags |= CC_Z;
+        } else {
+            // stb(a0, d);
+            EAX_W((uint8_t) newval);
+            eflags &= ~CC_Z;
+        }
+    } else if (ot == OT_WORD) {
+        uint16_t d;
+        uint16_t oldval, newval, result;
+
+        oldval = (uint16_t) EAX;
+        newval = (uint16_t) t1;
+
+        d = lduw(a0);
+        uint16_t* ptr = (uint16_t*)(uintptr_t)a0;
+        result = __sync_val_compare_and_swap(ptr, oldval, newval);
+
+        if (result == d) {
+            // stw(a0, newval);
+            eflags |= CC_Z;
+        } else {
+            // stw(a0, d);
+            EAX_W((uint16_t) newval);
+            eflags &= ~CC_Z;
+        }
+    } else if (ot == OT_LONG) {
+        uint32_t d;
+        uint32_t oldval, newval, result;
+
+        oldval = (uint32_t) EAX;
+        newval = (uint32_t) t1;
+
+        d = ldl(a0);
+        uint32_t* ptr = (uint32_t*)(uintptr_t)a0;
+        result = __sync_val_compare_and_swap(ptr, oldval, newval);
+        result = oldval + newval;
+
+        if (result == d) {
+            // stl(a0, newval);
+            eflags |= CC_Z;
+        } else {
+            // stl(a0, d);
+            EAX_W((uint32_t) newval);
+            eflags &= ~CC_Z;
+        }
+    } else {
+        uint64_t d;
+        uint64_t oldval, newval, result;
+        
+        oldval = EAX;
+        newval = t1;
+
+        d = ldq(a0);
+        uint64_t* ptr = (uint64_t*)(uintptr_t)a0;
+        result = __sync_val_compare_and_swap(ptr, oldval, newval);
+        result = oldval + newval;
+
+        if (result == d) {
+            // stq(a0, newval);
+            eflags |= CC_Z;
+        } else {
+            // stq(a0, d);
+            EAX_W(newval);
+            eflags &= ~CC_Z;
+        }
+    }
+
     CC_SRC_W(eflags);
 }
 

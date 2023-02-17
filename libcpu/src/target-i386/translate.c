@@ -4081,6 +4081,7 @@ static target_ulong disas_insn(DisasContext *s, target_ulong pc_start) {
     int modrm, reg, rm, mod, reg_addr, op, opreg, offset_addr, val;
     target_ulong next_eip, tval;
     int rex_w, rex_r;
+    int need_unlock = 1;
 
     // This is required for precise pc generation
     tcg_gen_insn_start(pc_start, s->cc_op);
@@ -4210,8 +4211,8 @@ next_byte:
     s->dflag = dflag;
 
     /* lock generation */
-    if (prefixes & PREFIX_LOCK)
-        gen_helper_lock();
+    // if (prefixes & PREFIX_LOCK)
+    //     gen_helper_lock();
 
 /* now check op code */
 reswitch:
@@ -4253,6 +4254,8 @@ reswitch:
         case 0x28 ... 0x2d:
         case 0x30 ... 0x35:
         case 0x38 ... 0x3d: {
+            if (prefixes & PREFIX_LOCK)
+                gen_helper_lock();
             int op, f, val;
             op = (b >> 3) & 7;
             f = (b >> 1) & 3;
@@ -4314,6 +4317,8 @@ reswitch:
         case 0x80: /* GRP1 */
         case 0x81:
         case 0x83: {
+            if (prefixes & PREFIX_LOCK)
+                gen_helper_lock();
             int val;
 
             if ((b & 1) == 0)
@@ -4355,15 +4360,21 @@ reswitch:
         /**************************/
         /* inc, dec, and other misc arith */
         case 0x40 ... 0x47: /* inc Gv */
+            if (prefixes & PREFIX_LOCK)
+                gen_helper_lock();
             ot = dflag ? OT_LONG : OT_WORD;
             gen_inc(s, ot, OR_EAX + (b & 7), 1);
             break;
         case 0x48 ... 0x4f: /* dec Gv */
+            if (prefixes & PREFIX_LOCK)
+                gen_helper_lock();
             ot = dflag ? OT_LONG : OT_WORD;
             gen_inc(s, ot, OR_EAX + (b & 7), -1);
             break;
         case 0xf6: /* GRP3 */
         case 0xf7:
+            if (prefixes & PREFIX_LOCK)
+                gen_helper_lock();
             if ((b & 1) == 0)
                 ot = OT_BYTE;
             else
@@ -4596,6 +4607,8 @@ reswitch:
 
         case 0xfe: /* GRP4 */
         case 0xff: /* GRP5 */
+            if (prefixes & PREFIX_LOCK)
+                gen_helper_lock();
             if ((b & 1) == 0)
                 ot = OT_BYTE;
             else
@@ -4851,6 +4864,8 @@ reswitch:
             break;
         case 0x1c0:
         case 0x1c1: /* xadd Ev, Gv */
+            if (prefixes & PREFIX_LOCK)
+                gen_helper_lock();
             if ((b & 1) == 0)
                 ot = OT_BYTE;
             else
@@ -4879,8 +4894,11 @@ reswitch:
         case 0x1b0:
         case 0x1b1: /* cmpxchg Ev, Gv */
         {
+            // if (prefixes & PREFIX_LOCK)
+            //     gen_helper_lock();
             TCGLabel *label1, *label2;
             TCGv t0, t1, t2, a0;
+            TCGv ott;
 
             if ((b & 1) == 0)
                 ot = OT_BYTE;
@@ -4893,6 +4911,7 @@ reswitch:
             t1 = tcg_temp_local_new();
             t2 = tcg_temp_local_new();
             a0 = tcg_temp_local_new();
+            ott = tcg_temp_local_new();
             gen_op_mov_v_reg(ot, t1, reg);
             if (mod == 3) {
                 rm = (modrm & 7) | REX_B(s);
@@ -4903,6 +4922,14 @@ reswitch:
                 gen_op_ld_v(ot + s->mem_index, t0, a0);
                 rm = 0; /* avoid warning */
             }
+            tcg_gen_movi_tl(ott, ot);
+#ifdef STATIC_TRANSLATOR
+            if (prefixes & PREFIX_LOCK) {
+                // a0 is address, t1 is register
+                gen_helper_cmpxchg(cpu_A0, t1, ott);
+            } else {
+#else
+            {
             label1 = gen_new_label();
             tcg_gen_sub_tl(t2, cpu_regs[R_EAX], t0);
             gen_extu(ot, t2);
@@ -4917,20 +4944,25 @@ reswitch:
                 /* perform no-op store cycle like physical cpu; must be
                    before changing accumulator to ensure idempotency if
                    the store faults and the instruction is restarted */
+                // t0 is dest operand here
                 gen_op_st_v(ot + s->mem_index, t0, a0);
                 gen_op_mov_reg_v(ot, R_EAX, t0);
                 tcg_gen_br(label2);
                 gen_set_label(label1);
+                // t1 is source operand
                 gen_op_st_v(ot + s->mem_index, t1, a0);
             }
             gen_set_label(label2);
             tcg_gen_mov_tl(cpu_cc_src, t0);
             tcg_gen_mov_tl(cpu_cc_dst, t2);
+#endif
+            }
             s->cc_op = CC_OP_SUBB + ot;
             tcg_temp_free(t0);
             tcg_temp_free(t1);
             tcg_temp_free(t2);
             tcg_temp_free(a0);
+            need_unlock = 0;
         } break;
         case 0x1c7: /* cmpxchg8b */
             modrm = cpu_ldub_code(s->env, s->pc++);
@@ -4941,6 +4973,8 @@ reswitch:
             if (dflag == 2) {
                 if (!(s->cpuid_ext_features & CPUID_EXT_CX16))
                     goto illegal_op;
+                if (prefixes & PREFIX_LOCK)
+                    gen_helper_lock();
                 gen_jmp_im(s, pc_start - s->cs_base);
                 if (s->cc_op != CC_OP_DYNAMIC)
                     gen_op_set_cc_op(s->cc_op);
@@ -4956,6 +4990,7 @@ reswitch:
                     gen_op_set_cc_op(s->cc_op);
                 gen_lea_modrm(s, modrm, &reg_addr, &offset_addr);
                 gen_helper_cmpxchg8b(cpu_A0);
+                need_unlock = 0;
             }
             s->cc_op = CC_OP_EFLAGS;
             break;
@@ -5355,11 +5390,11 @@ reswitch:
                 gen_lea_modrm(s, modrm, &reg_addr, &offset_addr);
                 gen_op_mov_TN_reg(ot, 0, reg);
                 /* for xchg, lock is implicit */
-                if (!(prefixes & PREFIX_LOCK))
+                if (prefixes & PREFIX_LOCK)
                     gen_helper_lock();
                 gen_op_ld_T1_A0(ot + s->mem_index);
                 gen_op_st_T0_A0(ot + s->mem_index);
-                if (!(prefixes & PREFIX_LOCK))
+                if (prefixes & PREFIX_LOCK)
                     gen_helper_unlock();
                 gen_op_mov_reg_T1(ot, reg);
             }
@@ -6530,6 +6565,8 @@ reswitch:
         /************************/
         /* bit operations */
         case 0x1ba: /* bt/bts/btr/btc Gv, im */
+            if (prefixes & PREFIX_LOCK)
+                gen_helper_lock();
             ot = dflag + OT_WORD;
             modrm = cpu_ldub_code(s->env, s->pc++);
             op = (modrm >> 3) & 7;
@@ -7696,7 +7733,7 @@ reswitch:
      * There must not be any more instructions after gen_eob is called,
      * they would be dead code anyway, causing crashes in tcg-llvm.
      */
-    if (!s->is_jmp) {
+    if (!s->is_jmp && need_unlock) {
         if (s->prefix & PREFIX_LOCK)
             gen_helper_unlock();
     }
