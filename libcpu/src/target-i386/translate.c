@@ -4864,8 +4864,9 @@ reswitch:
             break;
         case 0x1c0:
         case 0x1c1: /* xadd Ev, Gv */
-            if (prefixes & PREFIX_LOCK)
-                gen_helper_lock();
+        {
+            // if (prefixes & PREFIX_LOCK)
+            //     gen_helper_lock();
             if ((b & 1) == 0)
                 ot = OT_BYTE;
             else
@@ -4883,27 +4884,62 @@ reswitch:
             } else {
                 gen_lea_modrm(s, modrm, &reg_addr, &offset_addr);
                 gen_op_mov_TN_reg(ot, 0, reg);
+#if STATIC_TRANSLATOR
+                if (prefixes & PREFIX_LOCK) {
+                    switch (ot) {
+                        case OT_BYTE: abort(); // Unsupported
+                        case OT_WORD: abort(); // Unsupported
+                        case OT_LONG: {
+                            TCGv_i32 c_t0, c_t1;
+                            c_t0 = tcg_temp_local_new_i32();
+                            c_t1 = tcg_temp_local_new_i32();
+
+                            tcg_gen_mov_i32(c_t0, cpu_T[0]);
+                            gen_helper_xadd_l(c_t1, cpu_A0, c_t0);
+                            tcg_gen_ext_i32_tl(cpu_T[1], c_t1);
+
+                            tcg_temp_free(c_t0);
+                            tcg_temp_free(c_t1);
+                            break;
+                        }
+                        #ifdef TARGET_X86_64
+                        case OT_QUAD: {
+                            gen_helper_xadd_q(cpu_T[1], cpu_A0, cpu_T[0]);
+                            break;
+                        }
+                        #endif
+                    }
+                    gen_op_addl_T0_T1();
+                    gen_op_mov_reg_T1(ot, reg);
+                } else {
+#else
+                {
                 gen_op_ld_T1_A0(ot + s->mem_index);
                 gen_op_addl_T0_T1();
                 gen_op_st_T0_A0(ot + s->mem_index);
                 gen_op_mov_reg_T1(ot, reg);
+#endif
+                }
             }
             gen_op_update2_cc();
             s->cc_op = CC_OP_ADDB + ot;
+            need_unlock = 0;
             break;
+        }
         case 0x1b0:
         case 0x1b1: /* cmpxchg Ev, Gv */
         {
-            // if (prefixes & PREFIX_LOCK)
-            //     gen_helper_lock();
             TCGLabel *label1, *label2;
             TCGv t0, t1, t2, a0;
-            TCGv ott;
 
             if ((b & 1) == 0)
                 ot = OT_BYTE;
             else
                 ot = dflag + OT_WORD;
+
+            // if (prefixes & PREFIX_LOCK)
+            //     gen_helper_lock();
+
             modrm = cpu_ldub_code(s->env, s->pc++);
             reg = ((modrm >> 3) & 7) | rex_r;
             mod = (modrm >> 6) & 3;
@@ -4911,7 +4947,6 @@ reswitch:
             t1 = tcg_temp_local_new();
             t2 = tcg_temp_local_new();
             a0 = tcg_temp_local_new();
-            ott = tcg_temp_local_new();
             gen_op_mov_v_reg(ot, t1, reg);
             if (mod == 3) {
                 rm = (modrm & 7) | REX_B(s);
@@ -4922,14 +4957,52 @@ reswitch:
                 gen_op_ld_v(ot + s->mem_index, t0, a0);
                 rm = 0; /* avoid warning */
             }
-            tcg_gen_movi_tl(ott, ot);
 #ifdef STATIC_TRANSLATOR
             if (prefixes & PREFIX_LOCK) {
-                // a0 is address, t1 is register
-                gen_helper_cmpxchg(cpu_A0, t1, ott);
+                if (s->cc_op != CC_OP_DYNAMIC)
+                    gen_op_set_cc_op(s->cc_op);
+                // a0 is destination address
+                // t1 is source register
+                // t0 is the result --> value stored in memory before swap
+                // t2 represents the result of the subtraction
+                // t3 is value in eax before the operation
+                cpu_T3 = cpu_regs[R_EAX];
+                switch (ot) {
+                    case OT_BYTE: abort(); // Unsupported
+                    case OT_WORD: abort(); // Unsupported
+                    case OT_LONG: {
+                        TCGv_i32 c_t0, c_t1, c_t2;
+                        c_t0 = tcg_temp_local_new_i32();
+                        c_t1 = tcg_temp_local_new_i32();
+                        c_t2 = tcg_temp_local_new_i32();
+
+                        tcg_gen_mov_i32(c_t1, t1);
+                        tcg_gen_mov_i32(c_t2, cpu_T3);
+
+                        gen_helper_cmpxchg_l(c_t0, cpu_A0, c_t2, c_t1);
+
+                        tcg_gen_sub_i32(c_t1, c_t2, c_t0);
+                        tcg_gen_ext_i32_tl(t0, c_t0);
+                        tcg_gen_ext_i32_tl(t2, c_t1);
+
+                        tcg_temp_free(c_t0);
+                        tcg_temp_free(c_t1);
+                        tcg_temp_free(c_t2);
+                        break;
+                    }
+                    #ifdef TARGET_X86_64
+                    case OT_QUAD: {
+                        gen_helper_cmpxchg_q(t0, cpu_A0, cpu_T3, t1);
+                        tcg_gen_sub_tl(t2, cpu_T3, t0);
+                        break;
+                    }
+                    #endif
+                }
+                gen_extu(ot, t2);
             } else {
 #else
             {
+#endif
             label1 = gen_new_label();
             tcg_gen_sub_tl(t2, cpu_regs[R_EAX], t0);
             gen_extu(ot, t2);
@@ -4953,10 +5026,9 @@ reswitch:
                 gen_op_st_v(ot + s->mem_index, t1, a0);
             }
             gen_set_label(label2);
+            }
             tcg_gen_mov_tl(cpu_cc_src, t0);
             tcg_gen_mov_tl(cpu_cc_dst, t2);
-#endif
-            }
             s->cc_op = CC_OP_SUBB + ot;
             tcg_temp_free(t0);
             tcg_temp_free(t1);
@@ -4985,6 +5057,8 @@ reswitch:
             {
                 if (!(s->cpuid_features & CPUID_CX8))
                     goto illegal_op;
+                // if (prefixes & PREFIX_LOCK)
+                //     gen_helper_lock();
                 gen_jmp_im(s, pc_start - s->cs_base);
                 if (s->cc_op != CC_OP_DYNAMIC)
                     gen_op_set_cc_op(s->cc_op);
