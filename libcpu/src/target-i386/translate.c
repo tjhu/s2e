@@ -71,6 +71,7 @@ static TCGv cpu_tmp0, cpu_tmp4;
 static TCGv_ptr cpu_ptr0, cpu_ptr1;
 static TCGv_i32 cpu_tmp2_i32, cpu_tmp3_i32;
 static TCGv_i64 cpu_tmp1_i64;
+static int using_global_cpu_lock;
 static TCGv cpu_tmp5;
 
 #ifdef TARGET_X86_64
@@ -1370,6 +1371,7 @@ static void gen_helper_fp_arith_STN_ST0(int op, int opreg) {
 }
 
 /* if d == OR_TMP0, it means memory operand (address in A0) */
+// GG_GEN_OP
 static void gen_op(DisasContext *s1, int op, int ot, int d) {
     if (d != OR_TMP0) {
         gen_op_mov_TN_reg(ot, 0, d);
@@ -1412,11 +1414,41 @@ static void gen_op(DisasContext *s1, int op, int ot, int d) {
             s1->cc_op = CC_OP_DYNAMIC;
             break;
         case OP_ADDL:
+#ifdef STATIC_TRANSLATOR
+            if ((s1->prefix & PREFIX_LOCK) && d == OR_TMP0) {
+                switch(ot) {
+                    case OT_BYTE: abort(); // Unsupported
+                    case OT_WORD: abort(); // Unsupported
+                    case OT_LONG: {
+                         TCGv_i32 c_t0, c_t1;
+                         c_t0 = tcg_temp_local_new_i32();
+                         c_t1 = tcg_temp_local_new_i32();
+
+                         tcg_gen_mov_i32(c_t1, cpu_T[1]);
+                         gen_helper_add_l(c_t0, cpu_A0, c_t1);
+                         tcg_gen_ext_i32_tl(cpu_T[0], c_t0);
+
+                         tcg_temp_free(c_t0);
+                         tcg_temp_free(c_t1);
+                         break;
+                    }
+                    #ifdef TARGET_X86_64
+                    case OT_QUAD: {
+                        gen_helper_add_q(cpu_T[0], cpu_A0, cpu_T[1]);
+                        break;
+                    }
+                    #endif
+                }
+            } else {
+#else
+            {
+#endif
             gen_op_addl_T0_T1();
             if (d != OR_TMP0)
                 gen_op_mov_reg_T0(ot, d);
             else
                 gen_op_st_T0_A0(ot + s1->mem_index);
+            }
             gen_op_update2_cc();
             s1->cc_op = CC_OP_ADDB + ot;
             break;
@@ -4081,7 +4113,7 @@ static target_ulong disas_insn(DisasContext *s, target_ulong pc_start) {
     int modrm, reg, rm, mod, reg_addr, op, opreg, offset_addr, val;
     target_ulong next_eip, tval;
     int rex_w, rex_r;
-    int need_unlock = 1;
+    using_global_cpu_lock = 0;
 
     // This is required for precise pc generation
     tcg_gen_insn_start(pc_start, s->cc_op);
@@ -4211,8 +4243,10 @@ next_byte:
     s->dflag = dflag;
 
     /* lock generation */
-    // if (prefixes & PREFIX_LOCK)
+    // if (prefixes & PREFIX_LOCK) {
     //     gen_helper_lock();
+    //     using_global_cpu_lock = 1;
+    // }
 
 /* now check op code */
 reswitch:
@@ -4254,8 +4288,6 @@ reswitch:
         case 0x28 ... 0x2d:
         case 0x30 ... 0x35:
         case 0x38 ... 0x3d: {
-            if (prefixes & PREFIX_LOCK)
-                gen_helper_lock();
             int op, f, val;
             op = (b >> 3) & 7;
             f = (b >> 1) & 3;
@@ -4264,6 +4296,11 @@ reswitch:
                 ot = OT_BYTE;
             else
                 ot = dflag + OT_WORD;
+
+            if ((prefixes & PREFIX_LOCK) && op != OP_ADDL) {
+                gen_helper_lock();
+                using_global_cpu_lock = 1;
+            }
 
             switch (f) {
                 case 0: /* OP Ev, Gv */
@@ -4317,8 +4354,6 @@ reswitch:
         case 0x80: /* GRP1 */
         case 0x81:
         case 0x83: {
-            if (prefixes & PREFIX_LOCK)
-                gen_helper_lock();
             int val;
 
             if ((b & 1) == 0)
@@ -4330,6 +4365,12 @@ reswitch:
             mod = (modrm >> 6) & 3;
             rm = (modrm & 7) | REX_B(s);
             op = (modrm >> 3) & 7;
+
+            // TODO: FIX handling of lock <reg>, <mem>
+            if ((prefixes & PREFIX_LOCK) && op != OP_ADDL) {
+                gen_helper_lock();
+                using_global_cpu_lock = 1;
+            }
 
             if (mod != 3) {
                 if (b == 0x83)
@@ -4360,21 +4401,27 @@ reswitch:
         /**************************/
         /* inc, dec, and other misc arith */
         case 0x40 ... 0x47: /* inc Gv */
-            if (prefixes & PREFIX_LOCK)
+            if (prefixes & PREFIX_LOCK) {
                 gen_helper_lock();
+                using_global_cpu_lock = 1;
+            }
             ot = dflag ? OT_LONG : OT_WORD;
             gen_inc(s, ot, OR_EAX + (b & 7), 1);
             break;
         case 0x48 ... 0x4f: /* dec Gv */
-            if (prefixes & PREFIX_LOCK)
+            if (prefixes & PREFIX_LOCK) {
                 gen_helper_lock();
+                using_global_cpu_lock = 1;
+            }
             ot = dflag ? OT_LONG : OT_WORD;
             gen_inc(s, ot, OR_EAX + (b & 7), -1);
             break;
         case 0xf6: /* GRP3 */
         case 0xf7:
-            if (prefixes & PREFIX_LOCK)
+            if (prefixes & PREFIX_LOCK) {
                 gen_helper_lock();
+                using_global_cpu_lock = 1;
+            }
             if ((b & 1) == 0)
                 ot = OT_BYTE;
             else
@@ -4607,8 +4654,10 @@ reswitch:
 
         case 0xfe: /* GRP4 */
         case 0xff: /* GRP5 */
-            if (prefixes & PREFIX_LOCK)
+            if (prefixes & PREFIX_LOCK) {
                 gen_helper_lock();
+                using_global_cpu_lock = 1;
+            }
             if ((b & 1) == 0)
                 ot = OT_BYTE;
             else
@@ -4865,8 +4914,10 @@ reswitch:
         case 0x1c0:
         case 0x1c1: /* xadd Ev, Gv */
         {
-            // if (prefixes & PREFIX_LOCK)
+            // if (prefixes & PREFIX_LOCK) {
             //     gen_helper_lock();
+            //     using_global_cpu_lock = 1;
+            //  }
             if ((b & 1) == 0)
                 ot = OT_BYTE;
             else
@@ -4923,7 +4974,6 @@ reswitch:
             }
             gen_op_update2_cc();
             s->cc_op = CC_OP_ADDB + ot;
-            need_unlock = 0;
             break;
         }
         case 0x1b0:
@@ -4937,8 +4987,10 @@ reswitch:
             else
                 ot = dflag + OT_WORD;
 
-            // if (prefixes & PREFIX_LOCK)
+            // if (prefixes & PREFIX_LOCK) {
             //     gen_helper_lock();
+            //     using_global_cpu_lock = 1;
+            // }
 
             modrm = cpu_ldub_code(s->env, s->pc++);
             reg = ((modrm >> 3) & 7) | rex_r;
@@ -4992,8 +5044,22 @@ reswitch:
                     }
                     #ifdef TARGET_X86_64
                     case OT_QUAD: {
-                        gen_helper_cmpxchg_q(t0, cpu_A0, cpu_T3, t1);
-                        tcg_gen_sub_tl(t2, cpu_T3, t0);
+                        TCGv c_t0, c_t1, c_t2;
+                        c_t0 = tcg_temp_local_new_i64();
+                        c_t1 = tcg_temp_local_new_i64();
+                        c_t2 = tcg_temp_local_new_i64();
+
+                        tcg_gen_mov_tl(c_t2, cpu_T3);
+                        tcg_gen_mov_tl(c_t1, t1);
+
+                        gen_helper_cmpxchg_q(c_t0, cpu_A0, c_t2, c_t1);
+
+                        tcg_gen_sub_tl(t2, c_t2, c_t0);
+                        tcg_gen_mov_tl(t0, c_t0);
+
+                        tcg_temp_free(c_t0);
+                        tcg_temp_free(c_t1);
+                        tcg_temp_free(c_t2);
                         break;
                     }
                     #endif
@@ -5034,7 +5100,6 @@ reswitch:
             tcg_temp_free(t1);
             tcg_temp_free(t2);
             tcg_temp_free(a0);
-            need_unlock = 0;
         } break;
         case 0x1c7: /* cmpxchg8b */
             modrm = cpu_ldub_code(s->env, s->pc++);
@@ -5045,8 +5110,10 @@ reswitch:
             if (dflag == 2) {
                 if (!(s->cpuid_ext_features & CPUID_EXT_CX16))
                     goto illegal_op;
-                if (prefixes & PREFIX_LOCK)
+                if (prefixes & PREFIX_LOCK) {
                     gen_helper_lock();
+                    using_global_cpu_lock = 1;
+                }
                 gen_jmp_im(s, pc_start - s->cs_base);
                 if (s->cc_op != CC_OP_DYNAMIC)
                     gen_op_set_cc_op(s->cc_op);
@@ -5057,14 +5124,15 @@ reswitch:
             {
                 if (!(s->cpuid_features & CPUID_CX8))
                     goto illegal_op;
-                // if (prefixes & PREFIX_LOCK)
+                // if (prefixes & PREFIX_LOCK) {
                 //     gen_helper_lock();
+                //     using_global_cpu_lock = 1;
+                // }
                 gen_jmp_im(s, pc_start - s->cs_base);
                 if (s->cc_op != CC_OP_DYNAMIC)
                     gen_op_set_cc_op(s->cc_op);
                 gen_lea_modrm(s, modrm, &reg_addr, &offset_addr);
                 gen_helper_cmpxchg8b(cpu_A0);
-                need_unlock = 0;
             }
             s->cc_op = CC_OP_EFLAGS;
             break;
@@ -6639,8 +6707,10 @@ reswitch:
         /************************/
         /* bit operations */
         case 0x1ba: /* bt/bts/btr/btc Gv, im */
-            if (prefixes & PREFIX_LOCK)
+            if (prefixes & PREFIX_LOCK) {
                 gen_helper_lock();
+                using_global_cpu_lock = 1;
+            }
             ot = dflag + OT_WORD;
             modrm = cpu_ldub_code(s->env, s->pc++);
             op = (modrm >> 3) & 7;
@@ -7807,7 +7877,7 @@ reswitch:
      * There must not be any more instructions after gen_eob is called,
      * they would be dead code anyway, causing crashes in tcg-llvm.
      */
-    if (!s->is_jmp && need_unlock) {
+    if (!s->is_jmp && using_global_cpu_lock) {
         if (s->prefix & PREFIX_LOCK)
             gen_helper_unlock();
     }

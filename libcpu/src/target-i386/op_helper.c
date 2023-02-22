@@ -2163,37 +2163,51 @@ enum {
     OT_QUAD,
 };
 
+// lock add qword ptr
+uint32_t helper_add_l(target_ulong a0, uint32_t t0) {
+    uint32_t *ptr = (uint32_t*)(uintptr_t)a0;
+    uint32_t result = __sync_add_and_fetch(ptr, t0);
+    return result;
+}
+
+// lock add dword ptr
+uint64_t helper_add_q(target_ulong a0, uint64_t t0) {
+    uint64_t *ptr = (uint64_t*)(uintptr_t)a0;
+    uint64_t result = __sync_add_and_fetch(ptr, t0);
+    return result;
+}
+
+// lock xadd dword ptr
 uint32_t helper_xadd_l(target_ulong a0, uint32_t t0) {
     uint32_t *ptr = (uint32_t*)(uintptr_t)a0;
     uint32_t result = __sync_fetch_and_add(ptr, t0);
     return result;
 }
 
+// lock xadd qword ptr
 uint64_t helper_xadd_q(target_ulong a0, uint64_t t0) {
     uint64_t *ptr = (uint64_t*)(uintptr_t)a0;
     uint64_t result = __sync_fetch_and_add(ptr, t0);
     return result;
 }
 
+// lock cmpxchg dword ptr
 uint32_t helper_cmpxchg_l(target_ulong a0, uint32_t oldval, uint32_t newval) {
-    __sync_synchronize();
     uint32_t* ptr = (uint32_t*)(uintptr_t)a0;
     uint32_t res = __sync_val_compare_and_swap(ptr, oldval, newval);
     if (res != oldval) {
         EAX_W((uint32_t)res);
     }
-    __sync_synchronize();
     return res;
 }
 
+// lock cmpxchg qword ptr
 uint64_t helper_cmpxchg_q(target_ulong a0, uint64_t oldval, uint64_t newval) {
-    __sync_synchronize();
     uint64_t* ptr = (uint64_t*)(uintptr_t)a0;
     uint64_t res = __sync_val_compare_and_swap(ptr, oldval, newval);
     if (res != oldval) {
         EAX_W(res);
     }
-    __sync_synchronize();
     return res;
 }
 
