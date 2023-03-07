@@ -366,7 +366,8 @@ void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, co
 
         std::vector<uint64_t> succs;
         std::vector<uint64_t> callSuccs;
-        auto isIndirect = false;
+        bool isIndirect = false;
+        bool isRet = false;
 
         switch (tb->getType()) {
             case BB_JMP:
@@ -389,6 +390,7 @@ void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, co
                 break;
 
             case BB_RET:
+                isRet = true;
                 break;
 
             case BB_JMP_IND:
@@ -407,7 +409,8 @@ void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, co
         nlohmann::json newBlock{{"address", blockAddress},
                                 {"lastPc", tb->getLastAddress()},
                                 {"size", tb->getSize()},
-                                {"isIndirect", isIndirect}};
+                                {"isIndirect", isIndirect},
+                                {"isRet", isRet}};
 
         auto &jSuccs = newBlock["successors"];
         for (auto succ : succs) {
