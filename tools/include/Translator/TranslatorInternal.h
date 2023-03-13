@@ -380,7 +380,7 @@ void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, co
 
             case BB_CALL:
                 callSuccs.push_back(info.staticBranchTargets[0]);
-                // succs.push_back(blockAddress+tb->getSize());
+                succs.push_back(blockAddress+tb->getSize());
                 // Don't add the address past the call (i.e. blockAddress+tb->getSize()). It might not return and this
                 // could mess up the CFG.
                 break;
