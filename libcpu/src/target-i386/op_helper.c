@@ -264,6 +264,10 @@ void helper_unlock(void) {
 #endif
 }
 
+void helper_pause(void) {
+    __asm__ __volatile__("pause" ::: "memory");
+}
+
 void helper_memfence(void) {
     __sync_synchronize();
 }

@@ -6904,6 +6904,7 @@ reswitch:
                 goto do_xchg_reg_eax;
             }
             if (prefixes & PREFIX_REPZ) {
+                gen_helper_pause();
                 gen_svm_check_intercept(s, pc_start, SVM_EXIT_PAUSE);
             }
             break;
