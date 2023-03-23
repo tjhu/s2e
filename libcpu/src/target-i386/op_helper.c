@@ -264,6 +264,10 @@ void helper_unlock(void) {
 #endif
 }
 
+void helper_barrier(void) {
+    __asm__ __volatile__("" ::: "memory");
+}
+
 void helper_pause(void) {
     __asm__ __volatile__("pause" ::: "memory");
 }
@@ -2183,21 +2187,21 @@ uint64_t helper_add_q(target_ulong a0, uint64_t t0) {
 
 // lock xadd dword ptr
 uint32_t helper_xadd_l(target_ulong a0, uint32_t t0) {
-    uint32_t *ptr = (uint32_t*)(uintptr_t)a0;
+    volatile uint32_t *ptr = (uint32_t*)(uintptr_t)a0;
     uint32_t result = __sync_fetch_and_add(ptr, t0);
     return result;
 }
 
 // lock xadd qword ptr
 uint64_t helper_xadd_q(target_ulong a0, uint64_t t0) {
-    uint64_t *ptr = (uint64_t*)(uintptr_t)a0;
+    volatile uint64_t *ptr = (uint64_t*)(uintptr_t)a0;
     uint64_t result = __sync_fetch_and_add(ptr, t0);
     return result;
 }
 
 // lock cmpxchg dword ptr
 uint32_t helper_cmpxchg_l(target_ulong a0, uint32_t oldval, uint32_t newval) {
-    uint32_t* ptr = (uint32_t*)(uintptr_t)a0;
+    volatile uint32_t* ptr = (uint32_t*)(uintptr_t)a0;
     uint32_t res = __sync_val_compare_and_swap(ptr, oldval, newval);
     if (res != oldval) {
         EAX_W((uint32_t)res);
@@ -2207,11 +2211,23 @@ uint32_t helper_cmpxchg_l(target_ulong a0, uint32_t oldval, uint32_t newval) {
 
 // lock cmpxchg qword ptr
 uint64_t helper_cmpxchg_q(target_ulong a0, uint64_t oldval, uint64_t newval) {
-    uint64_t* ptr = (uint64_t*)(uintptr_t)a0;
+    volatile uint64_t* ptr = (uint64_t*)(uintptr_t)a0;
     uint64_t res = __sync_val_compare_and_swap(ptr, oldval, newval);
     if (res != oldval) {
         EAX_W(res);
     }
+    return res;
+}
+
+uint64_t helper_xchg_q(target_ulong a0, uint64_t reg) {
+    volatile uint64_t* ptr = (uint64_t*)(uintptr_t)a0;
+    uint64_t res = __sync_lock_test_and_set(ptr, reg);
+    return res;
+}
+
+uint32_t helper_xchg_l(target_ulong a0, uint32_t reg) {
+    volatile uint32_t* ptr = (uint32_t*)(uintptr_t)a0;
+    uint32_t res = __sync_lock_test_and_set(ptr, reg);
     return res;
 }
 
