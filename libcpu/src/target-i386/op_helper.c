@@ -2171,18 +2171,74 @@ enum {
     OT_QUAD,
 };
 
-// lock add qword ptr
-uint32_t helper_add_l(target_ulong a0, uint32_t t0) {
+// lock sub byte ptr
+uint64_t helper_sub_b(target_ulong a0, uint64_t t0) {
+    uint8_t *ptr = (uint8_t*)(uintptr_t)a0;
+    uint8_t temp = __sync_sub_and_fetch(ptr, (uint8_t)t0);
+    return (uint64_t)temp;
+}
+
+// lock sub word ptr
+uint64_t helper_sub_w(target_ulong a0, uint64_t t0) {
+    uint16_t *ptr = (uint16_t*)(uintptr_t)a0;
+    uint16_t temp = __sync_sub_and_fetch(ptr, (uint16_t)t0);
+    return (uint64_t)temp;
+}
+
+// lock sub dword ptr
+uint32_t helper_sub_l(target_ulong a0, uint32_t t0) {
     uint32_t *ptr = (uint32_t*)(uintptr_t)a0;
+    uint32_t result = __sync_sub_and_fetch(ptr, t0);
+    return result;
+}
+
+// lock sub qword ptr
+uint64_t helper_sub_q(target_ulong a0, uint64_t t0) {
+    uint64_t *ptr = (uint64_t*)(uintptr_t)a0;
+    uint64_t result = __sync_sub_and_fetch(ptr, t0);
+    return result;
+}
+
+// lock add byte ptr
+uint64_t helper_add_b(target_ulong a0, uint64_t t0) {
+    uint8_t *ptr = (uint8_t*)(uintptr_t)a0;
+    uint8_t temp = __sync_add_and_fetch(ptr, (uint8_t)t0);
+    return (uint64_t)temp;
+}
+
+// lock add word ptr
+uint64_t helper_add_w(target_ulong a0, uint64_t t0) {
+    uint16_t *ptr = (uint16_t*)(uintptr_t)a0;
+    uint16_t temp = __sync_add_and_fetch(ptr, (uint16_t)t0);
+    return (uint64_t)temp;
+}
+
+// lock add dword ptr
+uint32_t helper_add_l(target_ulong a0, uint32_t t0) {
+    volatile uint32_t *ptr = (uint32_t*)(uintptr_t)a0;
     uint32_t result = __sync_add_and_fetch(ptr, t0);
     return result;
 }
 
-// lock add dword ptr
+// lock add qword ptr
 uint64_t helper_add_q(target_ulong a0, uint64_t t0) {
-    uint64_t *ptr = (uint64_t*)(uintptr_t)a0;
+    volatile uint64_t *ptr = (uint64_t*)(uintptr_t)a0;
     uint64_t result = __sync_add_and_fetch(ptr, t0);
     return result;
+}
+
+// lock xadd byte ptr
+uint64_t helper_xadd_b(target_ulong a0, uint64_t t0) {
+    volatile uint8_t *ptr = (uint8_t*)(uintptr_t)a0;
+    uint8_t result = __sync_fetch_and_add(ptr, (uint8_t)t0);
+    return (uint64_t)result;
+}
+
+// lock xadd word ptr
+uint64_t helper_xadd_w(target_ulong a0, uint64_t t0) {
+    volatile uint16_t *ptr = (uint16_t*)(uintptr_t)a0;
+    uint16_t result = __sync_fetch_and_add(ptr, (uint16_t)t0);
+    return (uint64_t)result;
 }
 
 // lock xadd dword ptr
@@ -2197,6 +2253,26 @@ uint64_t helper_xadd_q(target_ulong a0, uint64_t t0) {
     volatile uint64_t *ptr = (uint64_t*)(uintptr_t)a0;
     uint64_t result = __sync_fetch_and_add(ptr, t0);
     return result;
+}
+
+// lock cmpxchg byte ptr
+uint64_t helper_cmpxchg_b(target_ulong a0, uint64_t oldval, uint64_t newval) {
+    volatile uint8_t* ptr = (uint8_t*)(uintptr_t)a0;
+    uint8_t res = __sync_val_compare_and_swap(ptr, (uint8_t)oldval, (uint8_t)newval);
+    if (res != oldval) {
+        EAX_W(res);
+    }
+    return (uint64_t)res;
+}
+
+// lock cmpxchg word ptr
+uint64_t helper_cmpxchg_w(target_ulong a0, uint64_t oldval, uint64_t newval) {
+    volatile uint16_t* ptr = (uint16_t*)(uintptr_t)a0;
+    uint16_t res = __sync_val_compare_and_swap(ptr, (uint16_t)oldval, (uint16_t)newval);
+    if (res != oldval) {
+        EAX_W(res);
+    }
+    return (uint64_t)res;
 }
 
 // lock cmpxchg dword ptr
@@ -2219,15 +2295,31 @@ uint64_t helper_cmpxchg_q(target_ulong a0, uint64_t oldval, uint64_t newval) {
     return res;
 }
 
-uint64_t helper_xchg_q(target_ulong a0, uint64_t reg) {
-    volatile uint64_t* ptr = (uint64_t*)(uintptr_t)a0;
-    uint64_t res = __sync_lock_test_and_set(ptr, reg);
-    return res;
+// xchg byte, reg
+uint64_t helper_xchg_b(target_ulong a0, uint64_t reg) {
+    volatile uint8_t* ptr = (uint8_t*)(uintptr_t)a0;
+    uint8_t res = __sync_lock_test_and_set(ptr, (uint8_t)reg);
+    return (uint64_t)res;
 }
 
+// xchg word, reg
+uint64_t helper_xchg_w(target_ulong a0, uint64_t reg) {
+    volatile uint16_t* ptr = (uint16_t*)(uintptr_t)a0;
+    uint16_t res = __sync_lock_test_and_set(ptr, (uint16_t)reg);
+    return (uint64_t)res;
+}
+
+// xchg dword reg
 uint32_t helper_xchg_l(target_ulong a0, uint32_t reg) {
     volatile uint32_t* ptr = (uint32_t*)(uintptr_t)a0;
     uint32_t res = __sync_lock_test_and_set(ptr, reg);
+    return res;
+}
+
+// xchg qword, reg
+uint64_t helper_xchg_q(target_ulong a0, uint64_t reg) {
+    volatile uint64_t* ptr = (uint64_t*)(uintptr_t)a0;
+    uint64_t res = __sync_lock_test_and_set(ptr, reg);
     return res;
 }
 
