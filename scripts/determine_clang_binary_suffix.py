@@ -90,7 +90,7 @@ def main():
         clang_ver_to_download = 'x86_64-darwin-apple'
     elif name.lower() == 'debian':
         clang_ver_to_download = _get_debian_version(version)
-    elif name.lower() == 'ubuntu':
+    elif name.lower() in ['ubuntu', 'pop']:
         clang_ver_to_download = _get_ubuntu_version(version)
     else:
         eprint('Linux distro %s is not supported' % name)

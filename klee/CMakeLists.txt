@@ -264,9 +264,9 @@ endif()
 ###############################################################################
 # Exception handling
 ###############################################################################
-# if (NOT LLVM_ENABLE_EH)
-#   klee_component_add_cxx_flag("-fno-exceptions" REQUIRED)
-# endif()
+if (NOT LLVM_ENABLE_EH)
+  klee_component_add_cxx_flag("-fno-exceptions" REQUIRED)
+endif()
 
 
 ################################################################################

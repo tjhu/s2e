@@ -27,7 +27,7 @@
 #include <s2e/cpu.h>
 
 #include <iostream>
-#include <llvm/Config/llvm-config.h>
+#include <llvm/Config/config.h>
 #include <llvm/Support/FileSystem.h>
 
 #include "Vmi.h"

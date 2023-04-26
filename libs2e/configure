@@ -29,8 +29,7 @@ echo "  --with-cc=PATH                   Path to clang"
 echo "  --with-cxx=PATH                  Path to clang++"
 echo "  --with-cflags=FLAGS              C compiler flags"
 echo "  --with-cxxflags=FLAGS            C++ compiler flags"
-echo "  --with-llvm=PATH                 LLVM_DIR"
-echo "  --with-llvm-tools-dir=PATH       LLVM_TOOLS_BINARY_DIR"
+echo "  --with-llvm=PATH                 LLVM binaries path (PATH/bin/llvm-config must exist)"
 echo "  --with-klee=PATH                 KLEE binaries path"
 echo "  --with-libvmi=PATH               libvmi build directory"
 echo "  --with-fsigc++=PATH              fsigc++ build directory"
@@ -49,6 +48,7 @@ echo "  --enable-debug                   Compile library with debug information"
 echo "  --with-s2e-guest-incdir=PATH     Path to S2E guest headers"
 }
 
+LLVM_ROOT=
 DEBUG=n
 
 for opt do
@@ -75,11 +75,7 @@ for opt do
     ;;
 
     --with-llvm=*)
-      LLVM_DIR="$optarg"
-    ;;
-
-    --with-llvm-tools-dir=*)
-      LLVM_TOOLS_DIR="$optarg"
+      LLVM_ROOT="$optarg"
     ;;
 
     --with-klee=*)
@@ -152,8 +148,8 @@ for opt do
   ARGCOUNT=$(expr $ARGCOUNT + 1)
 done
 
-if [ ! -x "$LLVM_TOOLS_DIR/llvm-config" ]; then
-  echo "$LLVM_TOOLS_DIR/llvm-config does not exist"
+if [ ! -x "$LLVM_ROOT/bin/llvm-config" ]; then
+  echo "$LLVM_ROOT/bin/llvm-config does not exist"
   print_usage
   exit 1
 fi
@@ -259,6 +255,7 @@ echo "CXXFLAGS := $CXXFLAGS" >> config.mak
 
 echo "=== Configuring libtcg... ==="
 rm -rf libtcg && mkdir -p libtcg && cd libtcg
+LLVM_DIR="$LLVM_ROOT/lib/cmake/llvm"
 cmake -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"      \
     -DCMAKE_C_FLAGS="$CFLAGS" -DCMAKE_CXX_FLAGS="$CXXFLAGS"     \
     -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DWITH_GUEST="$target"       \
