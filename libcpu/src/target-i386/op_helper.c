@@ -2296,14 +2296,14 @@ uint64_t helper_cmpxchg_q(target_ulong a0, uint64_t oldval, uint64_t newval) {
 }
 
 // xchg byte, reg
-uint64_t helper_xchg_b(target_ulong a0, uint64_t reg) {
+target_ulong helper_xchg_b(target_ulong a0, target_ulong reg) {
     volatile uint8_t* ptr = (uint8_t*)(uintptr_t)a0;
     uint8_t res = __sync_lock_test_and_set(ptr, (uint8_t)reg);
     return (uint64_t)res;
 }
 
 // xchg word, reg
-uint64_t helper_xchg_w(target_ulong a0, uint64_t reg) {
+target_ulong helper_xchg_w(target_ulong a0, target_ulong reg) {
     volatile uint16_t* ptr = (uint16_t*)(uintptr_t)a0;
     uint16_t res = __sync_lock_test_and_set(ptr, (uint16_t)reg);
     return (uint64_t)res;

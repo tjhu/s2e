@@ -5720,11 +5720,11 @@ reswitch:
                 switch (ot) {
                     case OT_BYTE: {
                         TCGv c_t0, c_t1, c_t2;
-                        c_t0 = tcg_temp_local_new_i64();
-                        c_t1 = tcg_temp_local_new_i64();
-                        c_t2 = tcg_temp_local_new_i64();
+                        c_t0 = tcg_temp_local_new();
+                        c_t1 = tcg_temp_local_new();
+                        c_t2 = tcg_temp_local_new();
 
-                        tcg_gen_mov_i64(c_t0, cpu_regs[reg]);
+                        tcg_gen_mov_tl(c_t0, cpu_regs[reg]);
                         gen_helper_xchg_b(c_t1, cpu_A0, c_t0);
                         tcg_gen_ext8u_tl(cpu_regs[reg], c_t1);
 
@@ -5735,11 +5735,11 @@ reswitch:
                     }
                     case OT_WORD: {
                         TCGv c_t0, c_t1, c_t2;
-                        c_t0 = tcg_temp_local_new_i64();
-                        c_t1 = tcg_temp_local_new_i64();
-                        c_t2 = tcg_temp_local_new_i64();
+                        c_t0 = tcg_temp_local_new();
+                        c_t1 = tcg_temp_local_new();
+                        c_t2 = tcg_temp_local_new();
 
-                        tcg_gen_mov_i64(c_t0, cpu_regs[reg]);
+                        tcg_gen_mov_tl(c_t0, cpu_regs[reg]);
                         gen_helper_xchg_w(c_t1, cpu_A0, c_t0);
                         tcg_gen_ext16u_tl(cpu_regs[reg], c_t1);
 
@@ -5758,8 +5758,8 @@ reswitch:
                         tcg_gen_mov_i32(c_t0, cpu_regs[reg]);
                         gen_helper_xchg_l(c_t1, cpu_A0, c_t0);
 
-                        tcg_gen_ext_i32_tl(c_t2, c_t1);
-                        tcg_gen_mov_i64(cpu_regs[reg], c_t2);
+                        tcg_gen_ext_i32_tl(cpu_regs[reg], c_t1);
+                        // tcg_gen_mov_i64(cpu_regs[reg], c_t2);
 
                         tcg_temp_free(c_t0);
                         tcg_temp_free(c_t1);

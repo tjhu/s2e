@@ -125,10 +125,18 @@ void RevGen::translate(const llvm::BinaryFunctions &functions, const llvm::Binar
 
     std::unordered_map<uint64_t, BinaryFunction *> fcnMap;
     for (auto fcn : functions) {
+        if (!fcn->getEntryBlock()) {
+            continue;
+        }
+
         fcnMap[fcn->getEntryBlock()->getStartPc()] = fcn;
     }
 
     for (auto const &bb : m_bbs) {
+        if (!bb) {
+            continue;
+        }
+
         TranslatedBlock *tb = translate(bb->getStartPc(), bb->getEndPc());
         if (tb) {
             m_tbs[tb->getAddress()] = tb;
