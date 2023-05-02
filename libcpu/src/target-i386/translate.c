@@ -4426,6 +4426,7 @@ reswitch:
             else
                 ot = dflag + OT_WORD;
 
+            // Use global_cpu_lock for all operations except ADDL
             if ((prefixes & PREFIX_LOCK) && op != OP_ADDL) {
                 gen_helper_lock();
                 using_global_cpu_lock = 1;
@@ -4495,7 +4496,8 @@ reswitch:
             rm = (modrm & 7) | REX_B(s);
             op = (modrm >> 3) & 7;
 
-            // TODO: FIX handling of lock <reg>, <mem>
+            // TODO: Currently we only handle lock <mem>, <reg>
+            // Use global_cpu_lock for all operations except ADDL
             if ((prefixes & PREFIX_LOCK) && op != OP_ADDL) {
                 gen_helper_lock();
                 using_global_cpu_lock = 1;
@@ -4530,18 +4532,10 @@ reswitch:
         /**************************/
         /* inc, dec, and other misc arith */
         case 0x40 ... 0x47: /* inc Gv */
-            // if (prefixes & PREFIX_LOCK) {
-            //     gen_helper_lock();
-            //     using_global_cpu_lock = 1;
-            // }
             ot = dflag ? OT_LONG : OT_WORD;
             gen_inc(s, ot, OR_EAX + (b & 7), 1);
             break;
         case 0x48 ... 0x4f: /* dec Gv */
-            // if (prefixes & PREFIX_LOCK) {
-            //     gen_helper_lock();
-            //     using_global_cpu_lock = 1;
-            // }
             ot = dflag ? OT_LONG : OT_WORD;
             gen_inc(s, ot, OR_EAX + (b & 7), -1);
             break;
@@ -4793,7 +4787,7 @@ reswitch:
             rm = (modrm & 7) | REX_B(s);
             op = (modrm >> 3) & 7;
 
-            // Disable for inc and dec
+            // Use global_cpu_lock for everything except inc and dec 
             if ((prefixes & PREFIX_LOCK) && op != 0 && op != 1) {
                 gen_helper_lock();
                 using_global_cpu_lock = 1;
@@ -5045,10 +5039,6 @@ reswitch:
         case 0x1c0:
         case 0x1c1: /* xadd Ev, Gv */
         {
-            // if (prefixes & PREFIX_LOCK) {
-            //     gen_helper_lock();
-            //     using_global_cpu_lock = 1;
-            // }
             if ((b & 1) == 0)
                 ot = OT_BYTE;
             else
@@ -5137,10 +5127,6 @@ reswitch:
                 ot = OT_BYTE;
             else
                 ot = dflag + OT_WORD;
-            // if (prefixes & PREFIX_LOCK) {
-            //     gen_helper_lock();
-            //     using_global_cpu_lock = 1;
-            // }
             modrm = cpu_ldub_code(s->env, s->pc++);
             reg = ((modrm >> 3) & 7) | rex_r;
             mod = (modrm >> 6) & 3;
@@ -5309,10 +5295,6 @@ reswitch:
             {
                 if (!(s->cpuid_features & CPUID_CX8))
                     goto illegal_op;
-                // if (prefixes & PREFIX_LOCK) {
-                //     gen_helper_lock();
-                //     using_global_cpu_lock = 1;
-                // }
                 gen_jmp_im(s, pc_start - s->cs_base);
                 if (s->cc_op != CC_OP_DYNAMIC)
                     gen_op_set_cc_op(s->cc_op);
@@ -8134,8 +8116,10 @@ reswitch:
      * they would be dead code anyway, causing crashes in tcg-llvm.
      */
     if (!s->is_jmp && using_global_cpu_lock) {
-        if (s->prefix & PREFIX_LOCK)
+        if (s->prefix & PREFIX_LOCK) {
+            using_global_cpu_lock = 0;
             gen_helper_unlock();
+        }
     }
     return s->pc;
 illegal_op:

@@ -2333,7 +2333,7 @@ void helper_cmpxchg8b(target_ulong a0) {
     int eflags;
     eflags = helper_cc_compute_all(CC_OP);
 
-#if 1
+#ifdef STATIC_TRANSLATOR
     uint64_t oldval, newval, result;
     oldval = (uint64_t) EDX << 32 | (uint32_t) EAX;
     newval = (uint64_t) ECX << 32 | (uint32_t) EBX;
