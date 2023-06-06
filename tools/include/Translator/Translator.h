@@ -257,7 +257,7 @@ public:
     static RegisterMask getRegisterMaskForHelper(llvm::Function *helper);
     static uint64_t getRegisterBitMask(llvm::Value *gep);
 
-    void exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, const std::string &cfgJson);
+    void exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, const std::string &cfgJson, bool aggroExploreCfg);
 };
 
 class X86Translator : public Translator {

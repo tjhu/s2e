@@ -65,6 +65,8 @@ cl::opt<std::string> BinaryFile("binary", cl::desc("The binary file to translate
 cl::opt<std::string> OutputFile("output", cl::desc("Output bitcode file"), cl::Required);
 
 cl::opt<std::string> ExternalCfg("external-cfg", cl::desc("CFG in JSON"), cl::Required);
+
+cl::opt<bool> AllowAggressiveCfgExploration("aggro-cfg", cl::desc("Allow ExploreCfg to add BBs beyond discovered call TBs"), cl::Optional);
 } // namespace
 
 RevGen::~RevGen() {
@@ -115,8 +117,8 @@ TranslatedBlock *RevGen::translate(uint64_t start, uint64_t end) {
     return tb;
 }
 
-void RevGen::exploreCfg(const std::string &cfgJson) {
-    m_translator->exploreCfg(m_tbs, cfgJson);
+void RevGen::exploreCfg(const std::string &cfgJson, bool aggroExploreCfg) {
+    m_translator->exploreCfg(m_tbs, cfgJson, aggroExploreCfg);
 }
 
 void RevGen::translate(const llvm::BinaryFunctions &functions, const llvm::BinaryBasicBlocks &bbs) {
@@ -236,7 +238,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    translator.exploreCfg(ExternalCfg);
+    translator.exploreCfg(ExternalCfg, AllowAggressiveCfgExploration);
     translator.translate(functions, toTranslate);
     translator.writeBitcodeFile(OutputFile);
 

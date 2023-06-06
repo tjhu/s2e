@@ -333,7 +333,7 @@ uint64_t Translator::getRegisterBitMask(llvm::Value *gepv) {
     return 0;
 }
 
-void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, const std::string &cfgJson) {
+void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, const std::string &cfgJson, bool aggroExploreCfg) {
     std::ifstream i(cfgJson);
     nlohmann::json j;
     i >> j;
@@ -380,9 +380,9 @@ void Translator::exploreCfg(llvm::DenseMap<uint64_t, TranslatedBlock *> &tbs, co
 
             case BB_CALL:
                 callSuccs.push_back(info.staticBranchTargets[0]);
-                succs.push_back(blockAddress+tb->getSize());
-                // Don't add the address past the call (i.e. blockAddress+tb->getSize()). It might not return and this
-                // could mess up the CFG.
+                if (aggroExploreCfg) {
+                    succs.push_back(blockAddress+tb->getSize());
+                }
                 break;
 
             case BB_REP:
