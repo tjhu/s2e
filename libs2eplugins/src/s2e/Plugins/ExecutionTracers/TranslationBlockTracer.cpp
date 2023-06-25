@@ -39,7 +39,7 @@ namespace s2e {
 namespace plugins {
 
 S2E_DEFINE_PLUGIN(TranslationBlockTracer, "Tracer for executed translation blocks", "TranslationBlockTracer",
-                  "ExecutionTracer", "ProcessExecutionDetector", "ModuleMap");
+                  "ExecutionTracer");
 
 namespace {
 
@@ -76,11 +76,13 @@ public:
 
 void TranslationBlockTracer::initialize() {
     m_tracer = s2e()->getPlugin<ExecutionTracer>();
-    m_detector = s2e()->getPlugin<ProcessExecutionDetector>();
-    m_modules.initialize(s2e(), getConfigKey());
-
     m_traceTbStart = s2e()->getConfig()->getBool(getConfigKey() + ".traceTbStart");
     m_traceTbEnd = s2e()->getConfig()->getBool(getConfigKey() + ".traceTbEnd");
+
+    m_tracker = ITracker::getTracker(s2e(), this);
+    if (!m_tracker) {
+        getWarningsStream() << "No filtering plugin specified. Tracing all translation blocks in the system.\n";
+    }
 
     s2e()->getCorePlugin()->onInitializationComplete.connect(
         sigc::mem_fun(*this, &TranslationBlockTracer::onInitializationComplete));
@@ -98,19 +100,25 @@ void TranslationBlockTracer::onInitializationComplete(S2EExecutionState *state) 
 
 void TranslationBlockTracer::onTranslateBlockStart(ExecutionSignal *signal, S2EExecutionState *state,
                                                    TranslationBlock *tb, uint64_t pc) {
-    auto tracedModule = m_modules.isModuleTraced(state, pc);
-    if (tracedModule) {
-        signal->connect(sigc::mem_fun(*this, &TranslationBlockTracer::onBlockStart));
+    DECLARE_PLUGINSTATE(TranslationBlockTracerState, state);
+
+    if (!plgState->enabled(TranslationBlockTracer::TB_START)) {
+        return;
     }
+
+    signal->connect(sigc::mem_fun(*this, &TranslationBlockTracer::onBlockStart));
 }
 
 void TranslationBlockTracer::onTranslateBlockEnd(ExecutionSignal *signal, S2EExecutionState *state,
                                                  TranslationBlock *tb, uint64_t pc, bool staticTarget,
                                                  uint64_t staticTargetPc) {
-    auto tracedModule = m_modules.isModuleTraced(state, pc);
-    if (tracedModule) {
-        signal->connect(sigc::mem_fun(*this, &TranslationBlockTracer::onBlockEnd));
+    DECLARE_PLUGINSTATE(TranslationBlockTracerState, state);
+
+    if (!plgState->enabled(TranslationBlockTracer::TB_END)) {
+        return;
     }
+
+    signal->connect(sigc::mem_fun(*this, &TranslationBlockTracer::onBlockEnd));
 }
 
 void TranslationBlockTracer::onBlockStart(S2EExecutionState *state, uint64_t pc) {
@@ -122,14 +130,7 @@ void TranslationBlockTracer::onBlockEnd(S2EExecutionState *state, uint64_t pc) {
 }
 
 void TranslationBlockTracer::onBlockStartEnd(S2EExecutionState *state, uint64_t pc, bool isStart) {
-    DECLARE_PLUGINSTATE(TranslationBlockTracerState, state);
-
-    auto type = isStart ? TranslationBlockTracer::TB_START : TranslationBlockTracer::TB_END;
-    if (!plgState->enabled(type)) {
-        return;
-    }
-
-    if (!m_detector->isTracked(state)) {
+    if (m_tracker && !m_tracker->isTracked(state)) {
         return;
     }
 
@@ -147,11 +148,13 @@ bool TranslationBlockTracer::tracingEnabled(S2EExecutionState *state, Translatio
 
 void TranslationBlockTracer::enableTracing(S2EExecutionState *state, TranslationBlockTracer::TraceType type) {
     DECLARE_PLUGINSTATE(TranslationBlockTracerState, state);
+    se_tb_safe_flush();
     return plgState->enable(type, true);
 }
 
 void TranslationBlockTracer::disableTracing(S2EExecutionState *state, TranslationBlockTracer::TraceType type) {
     DECLARE_PLUGINSTATE(TranslationBlockTracerState, state);
+    se_tb_safe_flush();
     return plgState->enable(type, false);
 }
 
@@ -171,8 +174,8 @@ template <typename T> static bool getConcolicValue(S2EExecutionState *state, uns
     return true;
 }
 
-static s2e_trace::PbTraceRegisterData getRegs(S2EExecutionState *state) {
-    s2e_trace::PbTraceRegisterData data;
+static s2e_trace::PbTraceRegisterData *getRegs(S2EExecutionState *state) {
+    auto data = new s2e_trace::PbTraceRegisterData();
 
     uint32_t symbMask = 0;
 
@@ -186,21 +189,21 @@ static s2e_trace::PbTraceRegisterData getRegs(S2EExecutionState *state) {
             symbMask |= 1 << i;
         }
 
-        data.add_values(concreteData);
+        data->add_values(concreteData);
     }
 
-    data.set_symb_mask(symbMask);
+    data->set_symb_mask(symbMask);
 
     return data;
 }
 
-static s2e_trace::PbTraceTbData getTbData(TranslationBlock *tb) {
-    s2e_trace::PbTraceTbData data;
+static s2e_trace::PbTraceTbData *getTbData(TranslationBlock *tb) {
+    auto data = new s2e_trace::PbTraceTbData();
 
-    data.set_tb_type(s2e_trace::PbTraceTbType(tb->se_tb_type));
-    data.set_size(tb->size);
-    data.set_first_pc(tb->pc);
-    data.set_last_pc(tb->pcOfLastInstr);
+    data->set_tb_type(s2e_trace::PbTraceTbType(tb->se_tb_type));
+    data->set_size(tb->size);
+    data->set_first_pc(tb->pc);
+    data->set_last_pc(tb->pcOfLastInstr);
 
     return data;
 }
@@ -213,21 +216,17 @@ void TranslationBlockTracer::trace(S2EExecutionState *state, ExecutionTracer *tr
         auto data = getTbData(tb);
 
         s2e_trace::PbTraceTranslationBlockStart item;
-        item.set_allocated_data(&data);
-        item.set_allocated_regs(&regs);
+        item.set_allocated_data(data);
+        item.set_allocated_regs(regs);
         tracer->writeData(state, item, type);
-        item.release_data();
-        item.release_regs();
     } else if (type == s2e_trace::PbTraceItemHeaderType::TRACE_TB_END) {
         auto regs = getRegs(state);
         auto data = getTbData(tb);
 
         s2e_trace::PbTraceTranslationBlockEnd item;
-        item.set_allocated_data(&data);
-        item.set_allocated_regs(&regs);
+        item.set_allocated_data(data);
+        item.set_allocated_regs(regs);
         tracer->writeData(state, item, type);
-        item.release_data();
-        item.release_regs();
     } else if (type == s2e_trace::PbTraceItemHeaderType::TRACE_BLOCK) {
         s2e_trace::PbTraceTranslationBlock item;
         item.set_pc(tb->pc);

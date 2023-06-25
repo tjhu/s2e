@@ -243,7 +243,7 @@ void ControlFlowTracer::onModuleTransition(S2EExecutionState *const state, const
 }
 
 void ControlFlowTracer::onModuleLoad(S2EExecutionState *const state, const ModuleDescriptor &module) {
-    if (m_pDetector->isTracked(state, module.Pid)) {
+    if (m_pDetector->isTrackedPid(state, module.Pid)) {
         for (const SectionDescriptor &section : module.Sections) {
             m_gen.registerSegment(module.Name, section.runtimeLoadBase, section.size);
         }

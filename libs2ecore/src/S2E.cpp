@@ -34,7 +34,6 @@
 #include <s2e/S2EExecutor.h>
 #include <s2e/Utils.h>
 
-#include <llvm/Config/config.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/Path.h>
@@ -48,7 +47,6 @@
 #include <llvm/IR/Module.h>
 
 #include <klee/Common.h>
-#include <klee/Interpreter.h>
 
 #include <assert.h>
 #include <deque>
@@ -477,7 +475,7 @@ void S2E::initPlugins() {
 }
 
 void S2E::initExecutor() {
-    m_s2eExecutor = new S2EExecutor(this, m_TCGLLVMTranslator, this);
+    m_s2eExecutor = new S2EExecutor(this, m_TCGLLVMTranslator);
 }
 
 llvm::raw_ostream &S2E::getStream(llvm::raw_ostream &stream, const S2EExecutionState *state) const {
