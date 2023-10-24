@@ -3429,13 +3429,16 @@ void helper_invlpg(target_ulong addr) {
 
 void helper_rdtsc(void) {
     uint64_t val;
-
+#ifdef STATIC_TRANSLATOR
     if ((env->cr[4] & CR4_TSD_MASK) && ((env->hflags & HF_CPL_MASK) != 0)) {
         raise_exception_ra(env, EXCP0D_GPF, GETPC());
     }
     helper_svm_check_intercept_param(SVM_EXIT_RDTSC, 0);
 
     val = cpu_get_tsc() + env->tsc_offset;
+#else
+    val = cpu_get_tsc();
+#endif
     EAX_W((uint32_t) (val));
     EDX_W((uint32_t) (val >> 32));
 }
