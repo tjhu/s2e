@@ -23,7 +23,9 @@
  */
 
 /* define it to use liveness analysis (better code) */
-#define USE_TCG_OPTIMIZATIONS
+#ifndef USE_TCG_OPTIMIZATIONS
+#define USE_TCG_OPTIMIZATIONS 1
+#endif
 
 /* Define to jump the ELF file used to communicate with GDB.  */
 #undef DEBUG_JIT
@@ -3989,7 +3991,7 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb, target_ulong pc_start) {
     atomic_set(&prof->opt_time, prof->opt_time - profile_getclock());
 #endif
 
-#ifdef USE_TCG_OPTIMIZATIONS
+#if USE_TCG_OPTIMIZATIONS
     tcg_optimize(s);
 #endif
 
