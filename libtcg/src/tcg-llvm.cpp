@@ -299,7 +299,7 @@ Value *TCGLLVMTranslator::getValue(TCGArg arg) {
                 assert(idx < m_tcgContext->nb_globals);
                 auto ptr = getPtrForValue(idx);
                 m_values[idx] =
-                    m_builder.CreateLoad(ptr->getType()->getPointerElementType(), ptr, StringRef(temp.name) + "_v");
+                    m_builder.CreateLoad(tcgType(temp.type), ptr, StringRef(temp.name) + "_v");
             } break;
 
             case TEMP_FIXED: {
@@ -310,7 +310,7 @@ Value *TCGLLVMTranslator::getValue(TCGArg arg) {
 
             case TEMP_LOCAL: {
                 auto ptr = getPtrForValue(idx);
-                m_values[idx] = m_builder.CreateLoad(ptr->getType()->getPointerElementType(), ptr);
+                m_values[idx] = m_builder.CreateLoad(tcgType(temp.type), ptr);
                 std::ostringstream name;
                 name << "loc" << (idx - m_tcgContext->nb_globals) << "_v";
                 m_values[idx]->setName(name.str());
@@ -508,7 +508,7 @@ Value *TCGLLVMTranslator::generateCpuStatePtr(uint64_t registerOffset, unsigned 
         } else {
             bool ok = getCpuFieldGepIndexes(registerOffset, sizeInBytes, gepElements);
             if (ok) {
-                ret = GetElementPtrInst::Create(m_cpuState->getType()->getPointerElementType(), m_cpuState,
+                ret = GetElementPtrInst::Create(m_cpuType, m_cpuState,
                                                 ArrayRef<Value *>(gepElements.begin(), gepElements.end()));
                 instList.push_front(ret);
                 m_registers[regsz] = ret;
@@ -685,7 +685,7 @@ int TCGLLVMTranslator::generateOperation(const TCGOp *op) {
             }
 // #endif
 
-            FunctionType *FTy = cast<FunctionType>(cast<PointerType>(helperFunc->getType())->getPointerElementType());
+            FunctionType *FTy = helperFunc->getFunctionType();
 
             /**
              * Cast arguments to target function type.
