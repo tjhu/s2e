@@ -540,7 +540,7 @@ void TCGLLVMTranslator::generateQemuCpuLoad(const TCGArg *args, unsigned memBits
     Value *gep = generateCpuStatePtr(args[2], memBits / 8);
     Value *v;
 
-    v = m_builder.CreateLoad(gep->getType()->getPointerElementType(), gep);
+    v = m_builder.CreateLoad(intType(memBits), gep);
     v = m_builder.CreateTrunc(v, intType(memBits));
 
     if (signExtend) {
