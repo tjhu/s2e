@@ -22,7 +22,7 @@ set(LIBQ_LIBRARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/src")
 configure_file(LIBQConfig.cmake.in ${CMAKE_CONFIG_FILE} @ONLY)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GLIB_PKG glib-2.0)
+pkg_check_modules(GLIB_PKG REQUIRED glib-2.0)
 
 include_directories(${GLIB_PKG_INCLUDE_DIRS} ${LIBQ_INCLUDE_DIR})
 
