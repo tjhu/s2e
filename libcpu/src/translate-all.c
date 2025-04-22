@@ -49,7 +49,7 @@
 
 /* Minimum size of the code gen buffer.  This number is randomly chosen,
    but not so small that we can't have a fair number of TB's live.  */
-#define MIN_CODE_GEN_BUFFER_SIZE (128 * 1024 * 1024)
+#define MIN_CODE_GEN_BUFFER_SIZE (16 * 1024 * 1024 * 1024)
 
 #if defined(CONFIG_SYMBEX_MP)
 tcg_target_ulong tcg_helper_ldb_mmu_symb(CPUArchState *env, target_ulong addr, int mmu_idx, void *retaddr);
