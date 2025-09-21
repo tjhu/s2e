@@ -335,6 +335,11 @@ static void tcg_region_assign(TCGContext *s, size_t curr_region) {
 
 static bool tcg_region_alloc__locked(TCGContext *s) {
     if (region.current == region.n) {
+        printf("TCG code gen buffer exhausted %zu bytes, number of regions %zu,"
+                " aggregate size of full regions %zu\n",
+               region.total_size,
+               region.n,
+               region.agg_size_full);
         return true;
     }
     tcg_region_assign(s, region.current);
@@ -713,6 +718,7 @@ void tcg_region_init(size_t tb_size, int splitwx, unsigned max_cpus) {
     if (tb_size > MAX_CODE_GEN_BUFFER_SIZE) {
         tb_size = MAX_CODE_GEN_BUFFER_SIZE;
     }
+    tb_size *= 16;
 
     have_prot = alloc_code_gen_buffer(tb_size, splitwx, &error_fatal);
     assert(have_prot >= 0);

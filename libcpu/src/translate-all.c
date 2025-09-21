@@ -200,7 +200,8 @@ tb_overflow:
                 max_insns /= 2;
 
 #ifdef CONFIG_SYMBEX
-                tb->se_tb = g_sqi.tb.tb_alloc();
+                // mirrorball doesn't use symbolic execution.
+                // tb->se_tb = g_sqi.tb.tb_alloc();
 #endif
 
                 goto tb_overflow;
