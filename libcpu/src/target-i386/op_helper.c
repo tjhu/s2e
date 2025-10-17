@@ -273,7 +273,9 @@ void helper_barrier(void) {
 }
 
 void helper_pause(void) {
-    __asm__ __volatile__("pause" ::: "memory");
+    // `pause` is not supported in cross-recompilation.
+    // It's technically just a hint, so we can treat it as a no-op.
+    // __asm__ __volatile__("pause" ::: "memory");
 }
 
 void helper_memfence(void) {
