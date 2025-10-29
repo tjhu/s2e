@@ -115,6 +115,7 @@ TCGLLVMTranslator *TCGLLVMTranslator::create(const std::string &bitcodeLibraryPa
 
     auto ErrorOrMod = parseBitcodeFile(ErrorOrMemBuff.get()->getMemBufferRef(), *ctx);
     if (!ErrorOrMod) {
+        llvm::errs() << "Parsing " << bitcodeLibraryPath << " failed!\n";
         return nullptr;
     }
 
@@ -477,7 +478,7 @@ void TCGLLVMTranslator::startNewBasicBlock(BasicBlock *bb) {
         m_builder.CreateBr(bb);
     }
 
-    m_tbFunction->getBasicBlockList().push_back(bb);
+    bb->insertInto(m_tbFunction);
     m_builder.SetInsertPoint(bb);
 
     /* Invalidate all temps */
@@ -500,7 +501,7 @@ Value *TCGLLVMTranslator::generateCpuStatePtr(uint64_t registerOffset, unsigned 
     static unsigned TARGET_LONG_BYTES = TARGET_LONG_BITS / 8;
 
     if ((registerOffset % (TARGET_LONG_BITS / 8)) == 0) {
-        auto &instList = m_tbFunction->begin()->getInstList();
+        BasicBlock* firstBB = &*m_tbFunction->begin();
         auto it = m_registers.find(regsz);
 
         if (it != m_registers.end()) {
@@ -510,7 +511,7 @@ Value *TCGLLVMTranslator::generateCpuStatePtr(uint64_t registerOffset, unsigned 
             if (ok) {
                 ret = GetElementPtrInst::Create(m_cpuType, m_cpuState,
                                                 ArrayRef<Value *>(gepElements.begin(), gepElements.end()));
-                instList.push_front(ret);
+                ret->insertBefore(firstBB->getFirstNonPHIOrDbgOrAlloca());
                 m_registers[regsz] = ret;
             }
         }
@@ -1137,7 +1138,7 @@ void TCGLLVMTranslator::removeInterruptExit() {
     auto target = br->getSuccessor(1);
     br->eraseFromParent();
     auto newBr = BranchInst::Create(target);
-    bb.getInstList().push_back(newBr);
+    newBr->insertInto(&bb, bb.end());
 }
 
 Function *TCGLLVMTranslator::generateCode(TCGContext *s, TranslationBlock *tb) {
